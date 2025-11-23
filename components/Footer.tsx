@@ -4,32 +4,38 @@ import SocialIcon from '@/components/social-icons'
 
 export default function Footer() {
   return (
-    <footer>
-      <div className="mt-16 flex flex-col items-center">
-        <div className="mb-3 flex space-x-4">
-          <SocialIcon kind="mail" href={`mailto:${siteMetadata.email}`} size={6} />
-          <SocialIcon kind="github" href={siteMetadata.github} size={6} />
-          <SocialIcon kind="facebook" href={siteMetadata.facebook} size={6} />
-          <SocialIcon kind="youtube" href={siteMetadata.youtube} size={6} />
-          <SocialIcon kind="linkedin" href={siteMetadata.linkedin} size={6} />
-          <SocialIcon kind="twitter" href={siteMetadata.twitter} size={6} />
-          <SocialIcon kind="bluesky" href={siteMetadata.bluesky} size={6} />
-          <SocialIcon kind="x" href={siteMetadata.x} size={6} />
-          <SocialIcon kind="instagram" href={siteMetadata.instagram} size={6} />
-          <SocialIcon kind="threads" href={siteMetadata.threads} size={6} />
-          <SocialIcon kind="medium" href={siteMetadata.medium} size={6} />
-        </div>
-        <div className="mb-2 flex space-x-2 text-sm text-gray-500 dark:text-gray-400">
-          <div>{siteMetadata.author}</div>
-          <div>{` • `}</div>
-          <div>{`© ${new Date().getFullYear()}`}</div>
-          <div>{` • `}</div>
-          <Link href="/">{siteMetadata.title}</Link>
-        </div>
-        <div className="mb-8 text-sm text-gray-500 dark:text-gray-400">
-          <Link href="https://github.com/timlrx/tailwind-nextjs-starter-blog">
-            Tailwind Nextjs Theme
-          </Link>
+    <footer className="mt-20">
+      <div className="relative overflow-hidden rounded-[40px] px-6 py-10 text-center">
+        <div
+          className="sparkle-grid pointer-events-none absolute inset-0 rounded-[40px]"
+          aria-hidden="true"
+        />
+        <div className="relative space-y-6">
+          <p className="text-xs font-semibold tracking-[0.5em] text-gray-500 uppercase">
+            Stay Playful
+          </p>
+          <div className="flex flex-wrap justify-center gap-4 text-gray-600">
+            <SocialIcon kind="mail" href={`mailto:${siteMetadata.email}`} size={6} />
+            <SocialIcon kind="github" href={siteMetadata.github} size={6} />
+            <SocialIcon kind="facebook" href={siteMetadata.facebook} size={6} />
+            <SocialIcon kind="youtube" href={siteMetadata.youtube} size={6} />
+            <SocialIcon kind="linkedin" href={siteMetadata.linkedin} size={6} />
+            <SocialIcon kind="twitter" href={siteMetadata.twitter} size={6} />
+            <SocialIcon kind="bluesky" href={siteMetadata.bluesky} size={6} />
+            <SocialIcon kind="x" href={siteMetadata.x} size={6} />
+            <SocialIcon kind="instagram" href={siteMetadata.instagram} size={6} />
+            <SocialIcon kind="threads" href={siteMetadata.threads} size={6} />
+            <SocialIcon kind="medium" href={siteMetadata.medium} size={6} />
+          </div>
+          <div className="flex flex-col items-center gap-1 text-xs font-semibold tracking-[0.4em] text-gray-500 uppercase">
+            <span>{siteMetadata.author}</span>
+            <span>{`© ${new Date().getFullYear()} ${siteMetadata.title}`}</span>
+          </div>
+          <div className="text-xs text-gray-500">
+            <Link href="https://github.com/timlrx/tailwind-nextjs-starter-blog">
+              Based on Tailwind Next.js
+            </Link>
+          </div>
         </div>
       </div>
     </footer>

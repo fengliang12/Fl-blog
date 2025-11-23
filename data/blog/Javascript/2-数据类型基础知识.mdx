@@ -1,0 +1,220 @@
+---
+title: JavaScript 数据类型基础知识
+date: '2021-11-17'
+tags: ['JavaScript']
+draft: false
+summary: 详解 JavaScript 中的数据类型、类型转换、对象方法及检测方式
+---
+
+## JavaScript 数据类型核心知识
+
+### 基本数据类型（值类型）
+- `number`：数字类型（整数、浮点数、NaN 等）
+- `string`：字符串类型
+- `boolean`：布尔类型（true/false）
+- `null`：空值
+- `undefined`：未定义
+- `Symbol` [ˈsɪmbl]：唯一值（ES6 新增）
+
+
+### 引用数据类型  
+- `object`：对象类型，包括：
+  - 普通对象 `{}`
+  - 数组 `[]`
+  - 正则表达式 `RegExp`
+  - 日期对象 `Date`
+  - 数学对象 `Math`
+  - 实例对象等
+- `function`：函数类型
+
+
+### 特殊知识点：NaN 与 isNaN
+- `NaN`（Not a Number）：表示非数字值，但其数据类型仍为 `number`
+- `isNaN()`：用于检测一个值是否为非数字（会先进行类型转换）
+  ```javascript
+  console.log(isNaN(NaN)); // true
+  console.log(isNaN('123')); // false（字符串会被转换为数字）
+  console.log(isNaN('abc')); // true
+  ```
+
+
+### 数据类型转换（重要）
+#### 强制转换
+```javascript
+// 转换为数字
+Number('123'); // 123
+parseInt('123abc'); // 123  parseInt 会从字符串开头开始解析数字字符，一旦遇到非数字字符就立即停止，返回已解析的有效数字；若开头不是数字，直接返回 NaN。
+parseFloat('123.45abc'); // 123.45
+
+// 转换为字符串
+String(123); // "123"
+(123).toString(); // "123"
+
+// 转换为布尔值
+Boolean(0); // false
+Boolean(''); // false
+Boolean({}); // true
+Boolean([]); // true
+```
+
+#### 隐式转换
+```javascript
+// 算术运算中的转换
+'10' - 5; // 5（字符串转数字）
+'10' + 5; // "105"（数字转字符串）
+
+// 比较运算中的转换
+'10' == 10; // true（隐式转换后相等）
+'10' === 10; // false（严格相等，不转换类型）
+```
+
+
+### 对象和数组常用方法（重要）
+#### 数组方法
+```javascript
+const arr = [1, 2, 3];
+
+// 增删元素
+arr.push(4); // [1,2,3,4]
+arr.pop(); // [1,2,3]
+
+// 迭代方法
+arr.map(item => item * 2); // [2,4,6]
+arr.filter(item => item > 1); // [2,3]
+
+// 其他常用
+arr.join('-'); // "1-2-3"
+arr.concat([4,5]); // [1,2,3,4,5]
+```
+
+#### 对象方法
+```javascript
+const obj = { name: 'Alice', age: 20 };
+
+// 获取属性
+Object.keys(obj); // ["name", "age"]
+Object.values(obj); // ["Alice", 20]
+Object.entries(obj); // [["name","Alice"], ["age",20]]
+
+// 复制对象
+const objCopy = Object.assign({}, obj);
+```
+
+
+### 数据类型检测方法（4 种）
+1. **typeof**（基础检测，存在局限性）
+   ```javascript
+   typeof 123; // "number"
+   typeof '123'; // "string"
+   typeof true; // "boolean"
+   typeof undefined; // "undefined"
+   typeof null; // "object"（历史遗留问题）
+   typeof Symbol('123'); // "symbol"
+
+   typeof {}; // "object"（无法区分对象、数组、null）
+   typeof function(){}; // "function"
+   ```
+
+2. **instanceof**（基于原型链检测）
+   ```javascript
+   [] instanceof Array; // true
+   {} instanceof Object; // true
+   function(){} instanceof Function; // true
+
+   /**
+    * 自己实现instanceof
+   */
+   function instanceof(obj, constructor) {
+     // 边界处理：如果obj是null/undefined，直接返回false
+      if (obj === null || typeof obj !== 'object' && typeof obj !== 'function') {
+         return false;
+      }
+      let proto = obj.__proto__;
+      while (obj !== null) {
+         if(proto === constructor.prototype) {
+            return true
+         }
+         proto = proto.__proto__;
+      }
+      return false;
+   }
+
+   ```
+
+3. **constructor**（通过构造函数检测）
+   ```javascript
+   [].constructor === Array; // true
+   ''.constructor === String; // true
+   ```
+
+4. **Object.prototype.toString.call()**（推荐，精度高）
+   ```javascript
+   Object.prototype.toString.call(123); // "[object Number]"
+   Object.prototype.toString.call('123'); // "[object String]"
+   Object.prototype.toString.call(true); // "[object Boolean]"
+   Object.prototype.toString.call(undefined); // "[object Undefined]"
+   Object.prototype.toString.call(null); // "[object Null]"
+   Object.prototype.toString.call({}); // "[object Object]"
+   Object.prototype.toString.call([]); // "[object Array]"
+   Object.prototype.toString.call(/^[a-zA-Z0-9]+$/); // "[object RegExp]"
+   Object.prototype.toString.call(new Date()); // "[object Date]"
+   Object.prototype.toString.call(Math); // "[object Math]"
+
+   /**
+    * 自己实现一个type函数，用于获取对象的类型字符串
+   */
+   function type(ele){
+      return Object.prototype.toString.call(ele).slice(8, -1).toLowerCase();
+   }
+   ```
+
+
+### 对象属性名的特殊规则
+对象的属性名只能是基本类型值，若使用引用类型作为属性名，会自动调用 `toString()` 转换为字符串：
+```javascript
+let a = { x: 100 };
+let b = { y: 200 };
+let obj = {};
+
+obj[a] = '11'; 
+obj[b] = '22';
+
+// a 和 b 都会被转换为 "[object Object]"
+console.log(obj[a]); // "22"（后者覆盖前者）
+console.log(obj[b]); // "22"
+```
+
+
+### 练习题解析
+#### Example 1
+```javascript
+let a = {}, b = '0', c = 0;
+a[b] = '11';
+a[c] = '22';
+console.log(a[b]); // "22"
+// 解析：'0' 和 0 作为属性名会被转换为相同的字符串 "0"，后者覆盖前者
+```
+
+#### Example 2
+```javascript
+let a = {},
+    b = Symbol('1'),
+    c = Symbol('1');
+a[b] = '11';
+a[c] = '22';
+console.log(a[b]); // "11"
+// 解析：Symbol 具有唯一性，即使描述相同，b 和 c 也是不同的属性名
+```
+
+#### Example 3
+```javascript
+let a = { x: 100 },
+    b = { y: 200 },
+    obj = {};
+obj[a] = '11'; 
+obj[b] = '22';
+console.log(obj[a]); // "22"
+// 解析：对象作为属性名会被转换为 "[object Object]"，后者覆盖前者
+```
+
+> 更多 API 细节可参考 [MDN Web Docs](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript)   

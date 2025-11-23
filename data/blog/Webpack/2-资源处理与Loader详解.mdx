@@ -1,0 +1,321 @@
+---
+title: Webpack 资源处理与 Loader 详解
+date: '2022-04-09'
+tags: ['Webpack']
+draft: false
+summary: 详解 Webpack Loader 工作原理及各类资源（CSS、图片、JS）的处理方案，掌握模块化开发中的资源管理
+---
+
+## 一、Loader 工作原理
+Loader 是 Webpack 处理非 JavaScript 模块的核心机制，其工作流程如下：
+
+1. **解析路径**：Webpack 根据 `import`/`require` 语句定位模块绝对路径
+2. **读取原始内容**：读取文件原始字节（如 CSS 文本、图片二进制）
+3. **Loader 链转换**：按配置顺序（从右到左）调用 Loader 处理内容，最终转换为标准 JS
+4. **解析与依赖收集**：Webpack 解析转换后的 JS，收集新的依赖模块
+
+**核心配置格式**：
+```javascript
+module: {
+  rules: [
+    {
+      test: /\.文件后缀$/, // 匹配文件的正则
+      use: [
+        // Loader 列表（执行顺序：从后往前）
+        "loader-name-1",
+        {
+          loader: "loader-name-2",
+          options: { /* 配置参数 */ }
+        }
+      ]
+    }
+  ]
+}
+```
+
+## 二、静态资源处理（图片、字体等）
+### 2.1 file-loader：文件迁移与路径管理
+将静态资源（图片、字体）复制到输出目录，并返回资源路径。
+
+**安装**：
+```bash
+npm install file-loader -D
+```
+
+**配置**：
+```javascript
+module: {
+  rules: [
+    {
+      test: /\.(png|jpe?g|gif|svg)$/,
+      use: {
+        loader: "file-loader",
+        options: {
+          // 文件名格式：原名称_哈希值.原后缀
+          name: "[name]_[hash:8].[ext]",
+          // 输出目录（相对于 output.path）
+          outputPath: "assets/images/"
+        }
+      }
+    }
+  ]
+}
+```
+
+**使用**：
+```javascript
+// 引入图片
+import logo from "./images/logo.png";
+// 插入到页面
+document.body.innerHTML = `<img src="${logo}" />`;
+```
+
+### 2.2 url-loader：图片转 Base64
+对小体积图片自动转为 Base64 字符串嵌入 JS，减少 HTTP 请求；大图片仍使用 file-loader 处理。
+
+**安装**：
+```bash
+npm install url-loader -D
+```
+
+**配置**：
+```javascript
+module: {
+  rules: [
+    {
+      test: /\.(png|jpe?g|gif)$/,
+      use: {
+        loader: "url-loader",
+        options: {
+          name: "[name]_[hash:8].[ext]",
+          outputPath: "assets/images/",
+          // 小于 2KB 的图片转 Base64
+          limit: 2048 // 单位：字节
+        }
+      }
+    }
+  ]
+}
+```
+
+## 三、样式文件处理（CSS/SCSS）
+### 3.1 CSS 基础处理
+需配合 `css-loader` 和 `style-loader`：
+- `css-loader`：解析 CSS 中的 `@import` 和 `url()` 依赖
+- `style-loader`：将 CSS 注入到页面 `<style>` 标签中
+
+**安装**：
+```bash
+npm install css-loader style-loader -D
+```
+
+**配置**：
+```javascript
+module: {
+  rules: [
+    {
+      test: /\.css$/,
+      // 执行顺序：先 css-loader 再 style-loader
+      use: ["style-loader", "css-loader"]
+    }
+  ]
+}
+```
+
+### 3.2 SCSS/SASS 处理
+需额外添加 `sass-loader`（依赖 `node-sass`）转换 SCSS 为 CSS。
+
+**安装**：
+```bash
+npm install sass-loader node-sass -D
+```
+
+**配置**：
+```javascript
+module: {
+  rules: [
+    {
+      test: /\.scss$/,
+      // 执行顺序：sass-loader → css-loader → style-loader
+      use: ["style-loader", "css-loader", "sass-loader"]
+    }
+  ]
+}
+```
+
+### 3.3 自动添加 CSS 前缀
+使用 `postcss-loader` 配合 `autoprefixer` 自动补全浏览器前缀。
+
+**安装**：
+```bash
+npm install postcss-loader autoprefixer -D
+```
+
+**配置**：
+1. 创建 `postcss.config.js`：
+   ```javascript
+   module.exports = {
+     plugins: [require("autoprefixer")]
+   };
+   ```
+
+2. 配置 Webpack：
+   ```javascript
+   module: {
+     rules: [
+       {
+         test: /\.css$/,
+         // 插入到 css-loader 之后
+         use: ["style-loader", "css-loader", "postcss-loader"]
+       }
+     ]
+   }
+   ```
+
+### 3.4 提取 CSS 为单独文件
+使用 `mini-css-extract-plugin` 将 CSS 从 JS 中提取为独立文件（生产环境推荐）。
+
+**安装**：
+```bash
+npm install mini-css-extract-plugin -D
+```
+
+**配置**：
+```javascript
+const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.css$/,
+        // 用 MiniCssExtractPlugin.loader 替代 style-loader
+        use: [MiniCssExtractPlugin.loader, "css-loader"]
+      }
+    ]
+  },
+  plugins: [
+    new MiniCssExtractPlugin({
+      filename: "assets/css/[name].[contenthash].css"
+    })
+  ]
+};
+```
+
+## 四、JavaScript 处理（Babel）
+将 ES6+ 语法转换为 ES5 以兼容旧浏览器，需配合 `babel-loader`。
+
+### 4.1 基础配置
+**安装核心依赖**：
+```bash
+npm install babel-loader @babel/core @babel/preset-env -D
+```
+
+**配置**：
+```javascript
+module: {
+  rules: [
+    {
+      test: /\.js$/,
+      exclude: /node_modules/, // 排除第三方模块
+      use: {
+        loader: "babel-loader",
+        options: {
+          presets: ["@babel/preset-env"] // 预设：一组转换规则
+        }
+      }
+    }
+  ]
+}
+```
+
+### 4.2  polyfill 补充（兼容新 API）
+`@babel/preset-env` 仅转换语法，需 `@babel/polyfill` 补充 `Promise`、`Array.prototype.includes` 等新 API。
+
+**安装**：
+```bash
+npm install @babel/polyfill --save
+```
+
+**按需引入配置**：
+```javascript
+// 修改 babel-loader 配置
+options: {
+  presets: [
+    [
+      "@babel/preset-env",
+      {
+        useBuiltIns: "usage", // 自动按需引入 polyfill
+        corejs: 2, // 指定 core-js 版本（需安装：npm install core-js@2 --save）
+        targets: {
+          // 目标浏览器版本
+          chrome: "60",
+          firefox: "50"
+        }
+      }
+    ]
+  ]
+}
+```
+
+### 4.3 避免全局污染（库开发）
+使用 `@babel/plugin-transform-runtime` 替代 `polyfill`，适用于开发组件库/工具库。
+
+**安装**：
+```bash
+npm install @babel/plugin-transform-runtime -D
+npm install @babel/runtime @babel/runtime-corejs2 --save
+```
+
+**配置**：
+```javascript
+options: {
+  plugins: [
+    [
+      "@babel/plugin-transform-runtime",
+      {
+        corejs: 2 // 启用 core-js 支持
+      }
+    ]
+  ]
+}
+```
+
+## 五、Loader 执行顺序与自定义
+### 5.1 执行顺序规则
+- 同一规则中的 Loader 按 `use` 数组**从右到左**执行
+- 多个规则按配置顺序**从上到下**匹配
+
+### 5.2 自定义简单 Loader
+创建一个替换源码中字符串的 Loader：
+
+1. 创建 `loaders/replace-loader.js`：
+   ```javascript
+   module.exports = function(source) {
+     // source 为文件原始内容
+     return source.replace("hello", "hi");
+   };
+   ```
+
+2. 配置使用：
+   ```javascript
+   module: {
+     rules: [
+       {
+         test: /\.js$/,
+         use: path.resolve(__dirname, "loaders/replace-loader.js")
+       }
+     ]
+   },
+   // 简化 Loader 路径查找
+   resolveLoader: {
+     modules: ["node_modules", "./loaders"]
+   }
+   ```
+
+## 总结
+Loader 是 Webpack 处理多样化资源的核心，通过合理配置可实现：
+- 静态资源的路径管理与优化
+- 样式文件的预处理与前缀补全
+- JavaScript 的语法转换与兼容性处理
+

@@ -1,0 +1,277 @@
+---
+title: JavaScript中this指向与call/apply/bind全解析（含手写实现与实战）
+date: '2021-12-19'
+tags: ['JavaScript']
+draft: false
+summary: 系统梳理this指向的五种核心场景、箭头函数this特性，深入剖析call/apply/bind的原理与区别，并提供不依赖原生方法的手写实现方案
+---
+
+## 一、this指向的核心场景（五大类）
+this的指向**完全由函数调用方式决定**，与定义位置无关，五大核心场景覆盖所有情况：
+
+### 1. 事件绑定场景
+- **规则**：事件触发时，方法中的this指向**绑定事件的DOM元素**（IE8及以下DOM2事件绑定指向window）；
+- **分类**：
+  - **DOM0级绑定**：直接通过`元素.on事件`绑定；
+  - **DOM2级绑定**：通过`addEventListener`绑定（标准浏览器），`attachEvent`绑定（IE8-，this指向window）。
+
+**示例**：
+```javascript
+// DOM0级绑定
+const btn = document.getElementById('btn');
+btn.onclick = function() {
+  console.log(this); // <button id="btn">...</button>（绑定事件的元素）
+};
+
+// DOM2级绑定（标准浏览器）
+btn.addEventListener('click', function() {
+  console.log(this); // <button id="btn">...</button>
+}, false);
+
+// DOM2级绑定（IE8-）
+btn.attachEvent('onclick', function() {
+  console.log(this); // window（特殊兼容问题）
+});
+```
+
+
+### 2. 普通函数执行场景
+- **规则**：函数执行时，this取决于**调用者是否有“.”**：
+  - 有“.”：this指向“.”前面的对象；
+  - 无“.”：非严格模式指向window，严格模式指向undefined。
+
+**示例**：
+```javascript
+function fn() {
+  console.log(this);
+}
+const obj = { name: 'test', fn };
+
+fn(); // window（非严格模式）/ undefined（严格模式）
+obj.fn(); // obj（“.”前面的对象）
+obj.__proto__.fn(); // obj.__proto__（“.”前面的原型对象）
+```
+
+
+### 3. 构造函数执行场景
+- **规则**：通过`new`调用函数时，this指向**新创建的实例对象**；
+- **关键**：`new`会触发构造函数执行流程（创建实例→绑定this→执行代码→返回实例）。
+
+**示例**：
+```javascript
+function Fn(name) {
+  this.name = name; // this指向new创建的实例
+  console.log(this); // Fn { name: '张三' }
+}
+const instance = new Fn('张三');
+console.log(instance.name); // 张三（this绑定的属性挂载到实例）
+```
+
+
+### 4. 箭头函数执行场景
+- **核心特性**：箭头函数**没有自身this**，其this继承自**外层最近的非箭头函数的this**；
+- **其他限制**：无prototype（不能new执行）、无arguments（需用`...args`替代）。
+
+**示例**：
+```javascript
+const obj = {
+  fn: function() {
+    return () => {
+      console.log(this); // 继承fn的this，指向obj
+    };
+  }
+};
+const arrowFn = obj.fn();
+arrowFn(); // obj（非箭头函数fn的this）
+
+// 对比普通函数
+const obj2 = {
+  fn: function() {
+    return function() {
+      console.log(this); // window（普通函数，无调用者）
+    };
+  }
+};
+obj2.fn()(); // window
+```
+
+
+### 5. call/apply/bind强制绑定场景
+- **规则**：通过这三个方法可强行改变函数this指向，差异在于执行时机和参数传递方式；
+- **核心**：第一个参数为this绑定的目标对象，非严格模式下传递null/undefined时this指向window。
+
+
+## 二、call/apply/bind的原理与区别
+### 1. 三者核心对比
+| 特性                | call                          | apply                        | bind                          |
+|---------------------|-------------------------------|------------------------------|-------------------------------|
+| **this绑定**        | 支持                          | 支持                          | 支持                          |
+| **执行时机**        | 立即执行                      | 立即执行                      | 延迟执行（返回新函数）        |
+| **参数传递**        | 逐个传递（arg1, arg2, ...）   | 数组/类数组传递（[arg1, arg2]）| 先传递部分参数（柯里化）      |
+| **返回值**          | 函数执行结果                  | 函数执行结果                  | 绑定this后的新函数            |
+| **IE兼容性**        | 兼容IE6+                      | 兼容IE6+                      | 不兼容IE8及以下               |
+| **性能**            | 略高于apply（参数展开开销小） | 略低于call                   | 与call/apply持平              |
+
+
+### 2. 经典实战案例
+```javascript
+function sum(a, b) {
+  return this.base + a + b;
+}
+const obj = { base: 10 };
+
+// call：立即执行，逐个传参
+sum.call(obj, 2, 3); // 10+2+3=15
+
+// apply：立即执行，数组传参
+sum.apply(obj, [2, 3]); // 15
+
+// bind：延迟执行，先传部分参数（柯里化）
+const boundSum = sum.bind(obj, 2);
+boundSum(3); // 15（后续传剩余参数）
+```
+
+
+## 三、不依赖原生方法的手写实现
+### 1. 手写call（不依赖call/apply/bind）
+**核心思路**：将函数作为目标对象的临时属性执行，执行后删除该属性，避免污染对象。
+```javascript
+~function(proto) {
+  function myCall(context = window, ...args) {
+    // 校验调用者是否为函数
+    if (typeof this !== 'function') {
+      throw new TypeError('not a function');
+    }
+    // 处理基础类型context（转为对象，确保可挂载属性）
+    if (typeof context !== 'object' && typeof context !== 'function') {
+      context = new context.constructor(context);
+    }
+    // 生成唯一临时属性名，避免覆盖原有属性
+    const tempKey = Symbol('tempCallKey');
+    context[tempKey] = this;
+    // 执行函数并收集结果
+    const result = context[tempKey](...args);
+    // 删除临时属性，避免污染
+    delete context[tempKey];
+    return result;
+  }
+  proto.call = myCall;
+}(Function.prototype);
+```
+
+
+### 2. 手写apply（不依赖call/apply/bind）
+**核心思路**：与call一致，仅参数处理改为数组展开。
+```javascript
+~function(proto) {
+  function myApply(context = window, args = []) {
+    if (typeof this !== 'function') {
+      throw new TypeError('not a function');
+    }
+    // 校验args是否为数组/类数组
+    if (!Array.isArray(args) && !(args instanceof ArrayLike)) {
+      throw new TypeError('args must be array-like');
+    }
+    const tempKey = Symbol('tempApplyKey');
+    context[tempKey] = this;
+    const result = context[tempKey](...args); // 数组展开为参数
+    delete context[tempKey];
+    return result;
+  }
+  proto.apply = myApply;
+}(Function.prototype);
+```
+
+
+### 3. 手写bind（不依赖call/apply/bind）
+**核心思路**：利用闭包保存原函数、绑定上下文和参数，返回新函数延迟执行。
+```javascript
+~function(proto) {
+  function myBind(context = window, ...outerArgs) {
+    if (typeof this !== 'function') {
+      throw new TypeError('not a function');
+    }
+    const tempFunc = this;
+    // 生成唯一临时属性名
+    const tempKey = Symbol('tempBindKey');
+    
+    return function(...innerArgs) {
+      // 合并外层和内层参数
+      const allArgs = outerArgs.concat(innerArgs);
+      // 挂载临时属性并执行
+      context[tempKey] = tempFunc;
+      const result = context[tempKey](...allArgs);
+      // 清理临时属性
+      delete context[tempKey];
+      return result;
+    };
+  }
+  proto.bind = myBind;
+}(Function.prototype);
+```
+
+
+## 四、复杂this指向题目解析
+### 题目：分析以下代码输出结果
+```javascript
+function fn1() { console.log(1); }
+function fn2() { console.log(2); }
+
+fn1.call(fn2); 
+fn1.call.call(fn2);
+Function.prototype.call(fn1);  
+Function.prototype.call.call(fn2); 
+```
+
+### 解析过程：
+1. **fn1.call(fn2)**：  
+   call将fn1的this绑定为fn2，执行fn1 → 输出`1`。
+
+2. **fn1.call.call(fn2)**：  
+   - 先看`fn1.call`：这是Function.prototype.call的实例（call本身是函数）；  
+   - 再调用`call(fn2)`：将`fn1.call`的this绑定为fn2，执行`fn1.call`（即call方法），此时call的this是fn2，无后续参数 → 执行fn2 → 输出`2`。
+
+3. **Function.prototype.call(fn1)**：  
+   call将Function.prototype的this绑定为fn1，执行Function.prototype（空函数） → 无输出。
+
+4. **Function.prototype.call.call(fn2)**：  
+   - `Function.prototype.call`是call方法本身；  
+   - 调用`call(fn2)`：将call的this绑定为fn2，执行call → 执行fn2 → 输出`2`。
+
+### 最终输出：
+```
+1
+2
+（无输出）
+2
+```
+
+
+## 五、核心总结
+1. **this指向本质**：函数执行时的“关联对象”，由调用方式决定，与栈顶/定义位置无关；
+2. **箭头函数关键**：无自身this，继承外层非箭头函数的this，避免了this指向混乱；
+3. **call/apply/bind核心**：通过临时挂载函数到目标对象实现this绑定，bind利用闭包延迟执行；
+4. **手写实现要点**：使用Symbol生成唯一临时属性，避免污染目标对象，执行后及时清理。
+
+
+```mermaid
+flowchart TD
+    A[开始：判断函数调用方式] --> B{函数是否为箭头函数？}
+    B -- 是 --> C[继承外层最近非箭头函数的this]
+    B -- 否 --> D{函数是否通过new调用？}
+    D -- 是 --> E[this = 新创建的实例对象]
+    D -- 否 --> F{函数是否通过call/apply/bind调用？}
+    F -- 是 --> G[this = 方法第一个参数（null/undefined→window）]
+    F -- 否 --> H{函数是否为事件绑定方法？}
+    H -- 是 --> I{是否为IE8-的attachEvent？}
+    I -- 是 --> J[this = window]
+    I -- 否 --> K[this = 绑定事件的DOM元素]
+    H -- 否 --> L{函数调用者是否有“.”？}
+    L -- 是 --> M[this = “.”前面的对象]
+    L -- 否 --> N{是否为严格模式？}
+    N -- 是 --> O[this = undefined]
+    N -- 否 --> P[this = window]
+    
+    %% 最终输出
+    C & E & G & J & K & M & O & P --> Q[this指向确定]
+    ```

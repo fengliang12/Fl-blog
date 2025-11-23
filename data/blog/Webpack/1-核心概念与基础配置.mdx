@@ -1,0 +1,206 @@
+---
+title: Webpack 核心概念与基础配置
+date: '2022-04-02'
+tags: ['Webpack', '前端工程化', '模块打包']
+draft: false
+summary: 详解 Webpack 核心概念、安装配置流程及基础用法，掌握模块打包的核心原理
+---
+
+## 一、Webpack 是什么？
+Webpack 是一个**模块打包工具**，它能识别 JavaScript 中的模块引入语法（`import`/`export`/`require` 等），通过递归构建**依赖关系图**，最终将分散的模块打包成一个或多个 `bundle` 文件。
+
+- **发展历程**：早期仅支持 JavaScript 模块，现可处理 CSS、图片、Vue 组件等各类资源
+- **核心价值**：解决模块依赖管理、资源处理、代码优化等前端工程化问题
+- **官方文档**：[Webpack 英文官网](https://webpack.js.org/) | [Webpack 中文网](https://www.webpackjs.com/)
+
+## 二、模块规范对比（ES6 vs CommonJS）
+Webpack 同时支持 ES6 模块和 CommonJS 模块规范，二者核心差异如下：
+
+| 特性                | ES6 模块                          | CommonJS 模块                   |
+|---------------------|----------------------------------|--------------------------------|
+| 输出方式            | `export`（多输出）、`export default`（单输出） | `exports`（多输出）、`module.exports`（单输出） |
+| 加载方式            | 按需加载指定接口                  | 加载整个模块                   |
+| 加载时机            | 解析阶段生成接口                  | 运行阶段加载                   |
+| 值的引用方式        | 动态引用（原模块值变化会同步）    | 值拷贝（缓存，原模块变化不影响） |
+| `this` 指向         | `undefined`                      | 当前模块                       |
+
+### 示例：值引用差异
+**CommonJS（值拷贝）**：
+```javascript
+// common.js
+let count = 1;
+module.exports = {
+  count,
+  increment: () => count++
+};
+
+// index.js
+const mod = require('./common');
+console.log(mod.count); // 1
+mod.increment();
+console.log(mod.count); // 1（值未更新）
+```
+
+**ES6 模块（动态引用）**：
+```javascript
+// es6.js
+export let count = 1;
+export const increment = () => count++;
+
+// index.js
+import { count, increment } from './es6';
+console.log(count); // 1
+increment();
+console.log(count); // 2（值同步更新）
+```
+
+## 三、Webpack 安装与环境配置
+### 3.1 环境准备
+- 依赖 Node.js（推荐最新稳定版），下载地址：[nodejs.org](https://nodejs.org/)
+- 检查安装：`node -v` 和 `npm -v` 命令可正常输出版本号
+
+### 3.2 安装方式
+#### 不推荐：全局安装
+```bash
+npm install webpack webpack-cli -g
+webpack -v  # 验证安装
+```
+
+#### 推荐：项目内局部安装
+```bash
+# 初始化项目（若未初始化）
+npm init -y
+
+# 安装到开发依赖
+npm install webpack webpack-cli --save-dev
+
+# 验证安装（npx 用于执行项目内依赖）
+npx webpack -v
+```
+
+#### 安装指定版本
+```bash
+# 查看版本历史
+npm info webpack
+
+# 安装特定版本（示例：webpack 5.75.0）
+npm install webpack@5.75.0 webpack-cli -D
+```
+
+## 四、Webpack 核心配置
+Webpack 通过配置文件（默认 `webpack.config.js`）定义打包规则，核心配置项如下：
+
+### 4.1 基础配置结构
+```javascript
+const path = require("path");
+
+module.exports = {
+  // 入口文件
+  entry: "./src/index.js",
+  // 输出配置
+  output: {
+    // 输出目录（必须为绝对路径）
+    path: path.resolve(__dirname, "./dist"),
+    // 输出文件名
+    filename: "bundle.js"
+  },
+  // 模块处理规则
+  module: { rules: [] },
+  // 插件配置
+  plugins: [],
+  // 模式（development/production）
+  mode: "development"
+};
+```
+
+### 4.2 核心概念详解
+1. **Entry（入口）**  
+   指定打包的起始文件，Webpack 从这里开始构建依赖图：
+   ```javascript
+   // 单入口
+   entry: "./src/index.js"
+
+   // 多入口（输出多个 bundle）
+   entry: {
+     app: "./src/app.js",
+     vendor: "./src/vendor.js"
+   }
+   ```
+
+2. **Output（输出）**  
+   定义打包后文件的存储路径和命名规则：
+   ```javascript
+   output: {
+     path: path.resolve(__dirname, "dist"),
+     // 多入口时使用 [name] 占位符
+     filename: "[name].[contenthash].js",
+     // 静态资源公共路径（如 CDN 地址）
+     publicPath: "https://cdn.example.com/"
+   }
+   ```
+
+3. **Mode（模式）**  
+   内置优化策略，影响打包结果：
+   - `development`：开发模式，不压缩代码，保留注释和源码映射
+   - `production`：生产模式，自动压缩代码、删除无用代码
+
+4. **Loader（模块转换器）**  
+   Webpack 仅能处理 JavaScript，通过 Loader 转换非 JS 模块（如 CSS、图片）：
+   ```javascript
+   module: {
+     rules: [
+       // 处理 CSS 文件
+       {
+         test: /\.css$/, // 匹配 .css 结尾的文件
+         use: ["style-loader", "css-loader"] // 从右到左执行
+       }
+     ]
+   }
+   ```
+
+5. **Plugin（插件）**  
+   扩展 Webpack 功能（如生成 HTML、清理输出目录）：
+   ```javascript
+   const HtmlWebpackPlugin = require("html-webpack-plugin");
+
+   plugins: [
+     // 自动生成 HTML 并引入打包后的 JS
+     new HtmlWebpackPlugin({
+       template: "./src/index.html" // 模板文件
+     })
+   ]
+   ```
+
+## 五、基础打包流程
+1. **创建项目结构**
+   ```
+   project/
+   ├─ src/
+   │  └─ index.js    # 入口文件
+   ├─ package.json
+   └─ webpack.config.js  # 配置文件
+   ```
+
+2. **编写入口代码**（`src/index.js`）
+   ```javascript
+   console.log("Hello Webpack!");
+   ```
+
+3. **执行打包命令**
+   ```bash
+   # 直接执行（使用默认配置文件）
+   npx webpack
+
+   # 或在 package.json 中配置脚本
+   # "scripts": { "build": "webpack" }
+   npm run build
+   ```
+
+4. **查看结果**  
+   打包后生成 `dist/bundle.js`，可在 HTML 中引入使用。
+
+## 六、常用命令与配置扩展
+- **指定配置文件**：`npx webpack --config webpack.dev.js`
+- **开发环境热更新**：使用 `webpack-dev-server`（见后续章节）
+- **清理输出目录**：配合 `clean-webpack-plugin` 插件
+

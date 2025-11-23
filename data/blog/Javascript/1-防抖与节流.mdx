@@ -1,0 +1,185 @@
+---
+title: JavaScript 防抖与节流原理、区别及应用
+date: '2021-11-10'
+tags: ['JavaScript']
+draft: false
+summary: 详解 JavaScript 中防抖与节流的实现原理、核心区别及实际应用场景，附带可直接使用的代码示例
+---
+
+## 防抖与节流核心概念
+
+防抖和节流是 JavaScript 中优化高频事件触发的核心技术，用于减少不必要的函数执行，提升页面性能。
+
+### 防抖（Debounce）
+- 定义：事件被触发后，延迟 n 秒执行回调；若 n 秒内事件再次触发，则重新计时，仅执行最后一次触发的回调。
+- 核心特点：触发后不会立即执行，等待指定时间无新触发才执行，多次触发会“顺延”执行时机。
+
+### 节流（Throttle）
+- 定义：规定一个时间单位，单位时间内事件多次触发时，仅第一次（或最后一次）生效，不会重新计时。
+- 核心特点：保证单位时间内只执行一次，触发时机相对固定，不会因频繁触发而延迟。
+
+---
+
+## 防抖：实现原理与代码示例
+
+### 基本实现（定时器版）
+通过定时器延迟执行函数，每次新触发时清除原有定时器并重新创建，实现“重新计时”效果。
+
+```javascript
+// 简单版本
+let timeout = null;
+function debounceSimple() {
+    if (timeout) clearTimeout(timeout); // 清除现有定时器
+    timeout = setTimeout(() => {
+        console.log('防抖执行：仅最后一次触发生效');
+    }, 2000); // 2秒延迟
+}
+
+// 绑定按钮点击事件
+document.querySelector('.debounce-btn').onclick = debounceSimple;
+```
+
+### 通用实现（闭包版）
+封装为可复用函数，支持传入目标函数和延迟时间，通过闭包保存定时器状态。
+
+```javascript
+/**
+ * 防抖函数通用实现
+ * @param {Function} fun - 需要防抖的目标函数
+ * @param {number} await - 延迟时间（毫秒）
+ * @returns {Function} 防抖处理后的函数
+ */
+function debounce(fun, await) {
+    let timeout = null; // 闭包保存定时器状态
+    return function () {
+        const context = this; // 保留当前this指向
+        const args = arguments; // 保留函数参数
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(() => {
+            fun.apply(context, args); // 绑定this和参数执行函数
+        }, await);
+    };
+}
+
+// 使用示例：按钮提交场景
+function submitForm() {
+    console.log('表单提交成功（仅执行一次）');
+}
+document.querySelector('.submit-btn').onclick = debounce(submitForm, 1000);
+```
+
+### 立即执行型防抖（前缘防抖）
+```javascript
+/**
+ * 立即执行型防抖（前缘防抖）
+ * 特点：
+ * 1. 首次触发立即执行函数
+ * 2. 后续触发会重置等待时间（顺延）
+ * 3. 等待时间内无新触发，才允许再次执行
+ * @param {Function} func - 需要防抖的函数
+ * @param {number} wait - 等待时间（毫秒）
+ * @returns {Function} 处理后的防抖函数
+ */
+function debounceImmediate(func, wait) {
+    let timeout = null; // 用于标记是否处于等待期
+    return function() {
+        const context = this; // 保留触发事件的上下文
+        let args = arguments;
+        // 首次触发或等待时间已结束，立即执行函数
+        if (!timeout) {
+            func.apply(context, args);
+        }else{
+            clearTimeout(timeout); // 清除现有定时器（重置等待时间）
+        }
+        
+        // 重置定时器，开始新的等待时间（顺延逻辑）
+        timeout = setTimeout(() => {
+            timeout = null; // 等待时间结束，允许再次执行
+        }, wait);
+    };
+}
+```
+
+---
+
+## 节流：实现原理与代码示例
+
+节流有两种经典实现方式，分别基于“状态锁”和“时间戳”，适用于不同场景。
+
+### 方式1：状态锁实现（定时器版）
+通过状态标记控制函数执行，单位时间内仅允许执行一次，执行后重置状态。
+
+```javascript
+/**
+ * 节流函数（状态锁版）
+ * @param {Function} fn - 需要节流的目标函数
+ * @param {number} await - 时间间隔（毫秒）
+ * @returns {Function} 节流处理后的函数
+ */
+function throttleLock(fn, await) {
+   let timeout = null;
+   return function(){
+    let context = this;
+    let args = arguments;
+    if(!timeout){
+        fn.apply(context,args);
+        timeout = setTimeout(() => {
+            timeout = null;
+        }, await);
+    }
+   }
+}
+
+// 使用示例：拖拽场景
+function handleDrag() {
+    console.log('拖拽位置更新（1秒内仅一次）');
+}
+document.querySelector('.drag-box').onmousemove = throttleLock(handleDrag, 1000);
+```
+
+
+---
+
+## 防抖与节流的核心区别
+
+| 对比维度 | 防抖（Debounce） | 节流（Throttle） |
+|----------|------------------|------------------|
+| 执行时机 | 延迟执行，多次触发重新计时 | 即时/定时执行，单位时间内固定次数 |
+| 执行次数 | 频繁触发时仅执行最后一次 | 频繁触发时按时间间隔均匀执行 |
+| 时间控制 | 延迟时间可顺延 | 时间间隔固定，不可顺延 |
+| 核心场景 | 需“等待稳定后执行”的场景 | 需“固定频率执行”的场景 |
+
+---
+
+## 实际应用场景
+
+### 防抖的典型场景
+1. 搜索框联想：输入停止1秒后再发送请求，避免输入过程中频繁调用接口。
+2. 按钮提交：防止用户快速点击多次提交表单，仅执行最后一次点击。
+3. 滚动加载：滚动停止后加载更多内容，避免滚动过程中持续触发加载。
+
+### 节流的典型场景
+1. 拖拽/滑动：控制元素拖拽时的位置更新频率，避免高频计算导致卡顿。
+2. 窗口缩放：监听窗口 resize 事件时，限制触发频率，优化页面重绘性能。
+3. 高频点击：按钮点击时控制单位时间内仅触发一次，如点赞、计数等操作。
+
+---
+
+### 练习题解析
+#### Example 1：防抖场景验证
+```javascript
+// 点击按钮3次（每次间隔500ms），最终仅执行1次
+const btn = document.querySelector('.test-debounce');
+btn.onclick = debounce(() => console.log('防抖执行'), 1000);
+// 解析：3次点击均在1秒内，每次点击重置定时器，仅最后一次点击触发回调
+```
+
+#### Example 2：节流场景验证
+```javascript
+// 点击按钮3次（每次间隔500ms），1秒内仅执行1次
+const btn = document.querySelector('.test-throttle');
+btn.onclick = throttleLock(() => console.log('节流执行'), 1000);
+// 解析：第一次点击执行，后续两次点击处于锁定状态，1秒后解锁可再次执行
+```
+
+要不要我帮你整理一份**防抖与节流通用工具函数代码包**，包含所有实现方式及场景化使用示例，可直接复制到项目中使用？

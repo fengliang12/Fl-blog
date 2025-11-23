@@ -1,0 +1,289 @@
+---
+title: Webpack 插件与开发效率优化
+date: '2022-04-10'
+tags: ['Webpack']
+draft: false
+summary: 详解 Webpack 插件原理及常用插件（HtmlWebpackPlugin、热更新等），掌握开发环境优化策略
+---
+
+## 一、Plugin 工作原理
+Plugin（插件）是 Webpack 的灵魂，用于扩展其功能，解决 Loader 无法处理的问题。其核心机制基于**事件驱动**（发布-订阅模式）：
+
+1. Webpack 运行过程中会触发一系列生命周期事件（如 `compile`、`emit`、`done`）
+2. 插件通过 `compiler.hooks.事件名.tap()` 注册回调，在特定时机执行逻辑
+3. 插件通常是一个类，包含 `apply` 方法，接收 `compiler` 实例作为参数
+
+**简单插件示例**：
+```javascript
+class MyPlugin {
+  constructor(options) {
+    this.options = options; // 接收配置参数
+  }
+
+  apply(compiler) {
+    // 在编译开始时触发
+    compiler.hooks.compile.tap("MyPlugin", () => {
+      console.log("编译开始了！", this.options);
+    });
+  }
+}
+
+module.exports = MyPlugin;
+```
+
+**使用插件**：
+```javascript
+const MyPlugin = require("./my-plugin");
+
+module.exports = {
+  plugins: [new MyPlugin({ name: "demo" })]
+};
+```
+
+## 二、常用核心插件
+### 2.1 HtmlWebpackPlugin：自动生成 HTML
+自动创建 HTML 文件并引入打包后的 `bundle`，避免手动维护脚本引用。
+
+**安装**：
+```bash
+npm install html-webpack-plugin -D
+```
+
+**配置**：
+```javascript
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+
+module.exports = {
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: "./src/index.html", // 模板文件
+      filename: "index.html", // 输出文件名
+      title: "Webpack Demo", // 页面标题
+      minify: {
+        // 生产环境压缩配置
+        collapseWhitespace: true, // 移除空格
+        removeComments: true // 移除注释
+      }
+    })
+  ]
+};
+```
+
+**模板文件（src/index.html）**：
+```html
+<!DOCTYPE html>
+<html>
+  <head>
+    <title><%= htmlWebpackPlugin.options.title %></title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- 打包后的 JS 会自动注入 -->
+  </body>
+</html>
+```
+
+### 2.2 CleanWebpackPlugin：清理输出目录
+在每次打包前自动删除 `output.path` 目录，避免旧文件残留。
+
+**安装**：
+```bash
+npm install clean-webpack-plugin -D
+```
+
+**配置**：
+```javascript
+const { CleanWebpackPlugin } = require("clean-webpack-plugin");
+
+module.exports = {
+  plugins: [new CleanWebpackPlugin()] // 无特殊配置
+};
+```
+
+### 2.3 DefinePlugin：注入环境变量
+在编译时注入全局变量，常用于区分开发/生产环境。
+
+**配置**（Webpack 内置，无需安装）：
+```javascript
+const webpack = require("webpack");
+
+module.exports = {
+  plugins: [
+    new webpack.DefinePlugin({
+      "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV),
+      "API_BASE_URL": JSON.stringify("https://api.example.com")
+    })
+  ]
+};
+```
+
+**使用**：
+```javascript
+// 代码中直接使用注入的变量
+if (process.env.NODE_ENV === "development") {
+  console.log("开发环境");
+}
+```
+
+### 2.4 HotModuleReplacementPlugin：热模块替换
+实现无刷新更新（HMR），修改模块后仅更新该模块，保留页面状态。
+
+**配置**：
+```javascript
+const webpack = require("webpack");
+
+module.exports = {
+  devServer: {
+    hot: true, // 启用热更新
+    hotOnly: true // 热更新失败时不刷新页面
+  },
+  plugins: [new webpack.HotModuleReplacementPlugin()]
+};
+```
+
+**JS 模块热更新处理**：
+```javascript
+// index.js
+import counter from "./counter";
+
+counter();
+
+// 监听 counter 模块变化
+if (module.hot) {
+  module.hot.accept("./counter", () => {
+    // 移除旧元素
+    document.body.removeChild(document.getElementById("counter"));
+    // 重新执行新模块
+    counter();
+  });
+}
+```
+
+## 三、开发环境优化
+### 3.1 Webpack Dev Server
+提供本地开发服务器，支持自动刷新、热更新、代理等功能。
+
+**安装**：
+```bash
+npm install webpack-dev-server -D
+```
+
+**核心配置**：
+```javascript
+module.exports = {
+  devServer: {
+    contentBase: "./dist", // 静态文件根目录
+    open: true, // 自动打开浏览器
+    port: 8080, // 端口号
+    compress: true, // 启用 gzip 压缩
+    proxy: {
+      // 跨域代理
+      "/api": {
+        target: "http://localhost:3000", // 目标服务器
+        pathRewrite: { "^/api": "" }, // 移除路径中的 /api 前缀
+        changeOrigin: true // 伪装请求来源
+      }
+    }
+  }
+};
+```
+
+**启动命令**：
+```json
+// package.json
+"scripts": {
+  "start": "webpack serve" // 替代 webpack-dev-server（Webpack 5+）
+}
+```
+
+### 3.2 Source Map 配置
+生成源码与打包后代码的映射，方便调试。
+
+**开发环境推荐**：
+```javascript
+module.exports = {
+  devtool: "cheap-module-eval-source-map"
+  // 优点：速度快，保留原始源码结构
+};
+```
+
+**生产环境推荐**：
+```javascript
+module.exports = {
+  devtool: "cheap-module-source-map"
+  // 优点：不暴露原始路径，仅保留错误定位能力
+};
+```
+
+### 3.3 环境变量管理
+使用 `cross-env` 统一跨平台环境变量设置，配合 `.env` 文件管理配置。
+
+**安装**：
+```bash
+npm install cross-env dotenv-webpack -D
+```
+
+**配置**：
+1. 定义 `.env.development`：
+   ```ini
+   REACT_APP_API_URL=http://dev.api.com
+   ```
+
+2. 配置 Webpack：
+   ```javascript
+   const Dotenv = require("dotenv-webpack");
+
+   module.exports = {
+     plugins: [
+       new Dotenv({
+         path: `.env.${process.env.NODE_ENV}` // 根据环境加载不同文件
+       })
+     ]
+   };
+   ```
+
+3. 命令行设置：
+   ```json
+   "scripts": {
+     "dev": "cross-env NODE_ENV=development webpack serve",
+     "build": "cross-env NODE_ENV=production webpack"
+   }
+   ```
+
+## 四、插件实战：多页面配置
+使用多个 `HtmlWebpackPlugin` 实例实现多页面应用打包。
+
+```javascript
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+
+module.exports = {
+  entry: {
+    index: "./src/index.js",
+    about: "./src/about.js"
+  },
+  output: {
+    filename: "js/[name].[hash].js",
+    path: path.resolve(__dirname, "dist")
+  },
+  plugins: [
+    // 首页
+    new HtmlWebpackPlugin({
+      template: "./src/index.html",
+      filename: "index.html",
+      chunks: ["index"] // 仅引入 index 入口的 JS
+    }),
+    // 关于页
+    new HtmlWebpackPlugin({
+      template: "./src/about.html",
+      filename: "about.html",
+      chunks: ["about"] // 仅引入 about 入口的 JS
+    })
+  ]
+};
+```
+
+## 总结
+插件是 Webpack 功能扩展的核心，通过合理使用：
+- 自动生成 HTML、清理输出目录，减少手动操作
+- 启用热更新、配置代理，提升开发效率
+- 注入环境变量，实现环境差异化配置

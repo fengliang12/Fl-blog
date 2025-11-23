@@ -1,0 +1,417 @@
+---
+title: Webpack 进阶：自定义 Loader、Plugin 与打包原理
+date: '2022-04-22'
+tags: ['Webpack']
+draft: false
+summary: 深入理解 Webpack 内部机制，学习如何自定义 Loader 和 Plugin，并手动实现一个简易打包工具
+---
+
+## 一、自定义 Webpack Loader
+Loader 是 Webpack 处理非 JavaScript 模块的核心机制，本质是一个函数，用于将输入的模块代码转换为输出代码。
+
+### 1.1 Loader 基础实现
+**目标**：创建一个替换源码中特定字符串的 Loader。
+
+1. **创建 Loader 文件**（`./loader/replaceLoader.js`）：
+   ```javascript
+   // 必须使用普通函数（箭头函数会丢失 this 上下文）
+   module.exports = function(source) {
+     // source 为输入的模块源码
+     console.log('原始源码:', source);
+     // 将 "kkb" 替换为 "222"
+     return source.replace('kkb', '222');
+   };
+   ```
+
+2. **在 Webpack 中配置使用**：
+   ```javascript
+   const path = require('path');
+
+   module.exports = {
+     module: {
+       rules: [
+         {
+           test: /\.js$/, // 匹配所有 JS 文件
+           use: {
+             // 指定 Loader 路径
+             loader: path.resolve(__dirname, './loader/replaceLoader.js')
+           }
+         }
+       ]
+     }
+   };
+   ```
+
+### 1.2 接收配置参数
+通过 `loader-utils` 工具获取配置参数，使 Loader 更灵活。
+
+1. **安装依赖**：
+   ```bash
+   npm install loader-utils -D
+   ```
+
+2. **改进 Loader**：
+   ```javascript
+   const loaderUtils = require('loader-utils');
+
+   module.exports = function(source) {
+     // 获取配置参数
+     const options = loaderUtils.getOptions(this);
+     // 使用参数替换字符串
+     return source.replace('kkb', options.name || '默认值');
+   };
+   ```
+
+3. **传递参数**：
+   ```javascript
+   module: {
+     rules: [
+       {
+         test: /\.js$/,
+         use: {
+           loader: path.resolve(__dirname, './loader/replaceLoader.js'),
+           options: {
+             name: '222' // 自定义参数
+           }
+         }
+       }
+     ]
+   }
+   ```
+
+### 1.3 处理异步操作
+使用 `this.async()` 处理异步转换逻辑（如网络请求、文件读写）。
+
+```javascript
+const loaderUtils = require('loader-utils');
+
+module.exports = function(source) {
+  const options = loaderUtils.getOptions(this);
+  // 获取异步回调函数
+  const callback = this.async();
+
+  // 模拟异步操作（如读取文件）
+  setTimeout(() => {
+    const result = source.replace('kkb', options.name);
+    // 异步返回结果（err, content, sourceMap, meta）
+    callback(null, result);
+  }, 1000);
+};
+```
+
+### 1.4 多 Loader 协作
+Loader 执行顺序为**从右到左**（或从下到上），可串联处理模块。
+
+1. **创建第二个 Loader**（`replaceLoaderAsync.js`）：
+   ```javascript
+   module.exports = function(source) {
+     return source.replace('222', 'Webpack 课程');
+   };
+   ```
+
+2. **配置 Loader 链**：
+   ```javascript
+   module: {
+     rules: [
+       {
+         test: /\.js$/,
+         use: [
+           './loader/replaceLoader.js', // 后执行
+           {
+             loader: './loader/replaceLoaderAsync.js',
+             options: { name: '222' } // 先执行
+           }
+         ]
+       }
+     ]
+   }
+   ```
+
+3. **简化 Loader 路径**：
+   ```javascript
+   // 配置 Loader 查找目录
+   resolveLoader: {
+     modules: ['node_modules', './loader'] // 优先查找自定义目录
+   },
+   module: {
+     rules: [
+       {
+         test: /\.js$/,
+         use: ['replaceLoader', 'replaceLoaderAsync'] // 直接使用文件名
+       }
+     ]
+   }
+   ```
+
+### 1.5 Loader 核心 API
+- `this.query`：获取配置参数（简化版）
+- `this.callback()`：返回多值结果（内容、sourceMap 等）
+- `this.async()`：标记异步处理
+- `this.resourcePath`：当前处理文件的路径
+- 更多 API 参考：[Webpack Loader API](https://webpack.js.org/api/loaders)
+
+## 二、自定义 Webpack Plugin
+Plugin 用于扩展 Webpack 功能，基于**事件驱动**模型，可在打包过程的特定时机执行任务。
+
+### 2.1 Plugin 基础结构
+Plugin 是一个类，必须包含 `apply` 方法，接收 `compiler` 实例作为参数。
+
+```javascript
+// ./plugin/copyright-webpack-plugin.js
+class CopyrightWebpackPlugin {
+  // 接收插件配置参数
+  constructor(options) {
+    this.options = options;
+  }
+
+  // 插件入口方法
+  apply(compiler) {
+    // compiler 是 Webpack 实例，包含所有配置信息
+    console.log('插件配置:', this.options);
+  }
+}
+
+module.exports = CopyrightWebpackPlugin;
+```
+
+**使用插件**：
+```javascript
+const CopyrightWebpackPlugin = require('./plugin/copyright-webpack-plugin');
+
+module.exports = {
+  plugins: [
+    new CopyrightWebpackPlugin({
+      name: '222' // 传递参数
+    })
+  ]
+};
+```
+
+### 2.2 监听 Webpack 生命周期
+通过 `compiler.hooks` 注册事件回调，在特定阶段执行逻辑。
+
+```javascript
+class CopyrightWebpackPlugin {
+  apply(compiler) {
+    // 同步钩子：编译开始时触发
+    compiler.hooks.compile.tap('CopyrightWebpackPlugin', () => {
+      console.log('编译开始了！');
+    });
+
+    // 异步钩子：资源输出前触发
+    compiler.hooks.emit.tapAsync(
+      'CopyrightWebpackPlugin',
+      (compilation, callback) => {
+        // compilation 包含当前构建的所有资源
+        compilation.assets['copyright.txt'] = {
+          source: () => '版权所有：222', // 文件内容
+          size: () => 12 // 文件大小（字节）
+        };
+        callback(); // 异步完成
+      }
+    );
+  }
+}
+```
+
+### 2.3 核心概念
+- **Compiler**：Webpack 主引擎，包含全局配置，生命周期贯穿整个打包过程
+- **Compilation**：单次构建的上下文对象，包含当前构建的所有资源和依赖
+- **Hooks**：事件钩子，如 `compile`（开始编译）、`emit`（输出资源）、`done`（完成构建）
+
+**常用钩子参考**：[Webpack Compiler Hooks](https://webpack.js.org/api/compiler-hooks)
+
+## 三、Webpack 打包原理分析
+Webpack 本质是一个**模块打包器**，核心流程为：解析依赖 → 转换代码 → 合并输出。
+
+### 3.1 打包核心流程
+1. **解析入口文件**：从 `entry` 开始，分析模块依赖
+2. **构建依赖图**：递归解析所有模块的依赖关系
+3. **转换代码**：通过 Loader 处理非 JS 模块，将所有模块转为 JS
+4. **生成输出**：将转换后的模块合并为 `bundle` 文件，实现自定义模块化系统
+
+### 3.2 简化的打包产物
+Webpack 最终生成的代码包含一个**模块化加载器**和**所有模块的集合**：
+
+```javascript
+// 自执行函数包裹所有模块
+(function(modules) {
+  // 缓存已加载的模块
+  var installedModules = {};
+
+  // 自定义 require 函数
+  function __webpack_require__(moduleId) {
+    if (installedModules[moduleId]) {
+      return installedModules[moduleId].exports;
+    }
+
+    // 创建新模块并缓存
+    var module = (installedModules[moduleId] = {
+      i: moduleId, // 模块 ID
+      l: false, // 是否已加载
+      exports: {} // 模块导出对象
+    });
+
+    // 执行模块代码
+    modules[moduleId].call(
+      module.exports,
+      module,
+      module.exports,
+      __webpack_require__
+    );
+
+    module.l = true; // 标记为已加载
+    return module.exports;
+  }
+
+  // 启动入口模块
+  return __webpack_require__('./src/index.js');
+})({
+  // 模块集合：key 为模块路径，value 为模块代码
+  './src/index.js': function(module, exports, __webpack_require__) {
+    eval('console.log("hello webpack");\n\n//# sourceURL=webpack:///./src/index.js?');
+  }
+});
+```
+
+## 四、手动实现简易打包工具
+通过模拟 Webpack 核心流程，实现一个简易的模块打包器。
+
+### 4.1 步骤 1：解析单个模块
+使用 `@babel/parser` 解析代码生成 AST，`@babel/traverse` 提取依赖，`@babel/core` 转换代码。
+
+**安装依赖**：
+```bash
+npm install @babel/parser @babel/traverse @babel/core @babel/preset-env -D
+```
+
+**解析函数**：
+```javascript
+const fs = require('fs');
+const path = require('path');
+const parser = require('@babel/parser');
+const traverse = require('@babel/traverse').default;
+const babel = require('@babel/core');
+
+// 分析单个模块
+function moduleAnalyser(filename) {
+  // 1. 读取文件内容
+  const content = fs.readFileSync(filename, 'utf-8');
+
+  // 2. 解析为 AST
+  const ast = parser.parse(content, {
+    sourceType: 'module' // 解析 ES6 模块
+  });
+
+  // 3. 提取依赖
+  const dependencies = {};
+  traverse(ast, {
+    ImportDeclaration({ node }) {
+      const dirname = path.dirname(filename);
+      const newPath = './' + path.join(dirname, node.source.value);
+      dependencies[node.source.value] = newPath; // 保存依赖路径映射
+    }
+  });
+
+  // 4. 转换为浏览器可执行代码
+  const { code } = babel.transformFromAst(ast, null, {
+    presets: ['@babel/preset-env']
+  });
+
+  return {
+    filename,
+    dependencies,
+    code
+  };
+}
+```
+
+### 4.2 步骤 2：构建依赖图
+递归解析所有模块，生成完整的依赖关系图。
+
+```javascript
+function makeDependenciesGraph(entry) {
+  const entryModule = moduleAnalyser(entry);
+  const graphArray = [entryModule];
+
+  // 递归解析所有依赖
+  for (let i = 0; i < graphArray.length; i++) {
+    const module = graphArray[i];
+    const { dependencies } = module;
+
+    if (dependencies) {
+      for (const key in dependencies) {
+        graphArray.push(moduleAnalyser(dependencies[key]));
+      }
+    }
+  }
+
+  // 转换为对象格式
+  const graph = {};
+  graphArray.forEach(item => {
+    graph[item.filename] = {
+      dependencies: item.dependencies,
+      code: item.code
+    };
+  });
+
+  return graph;
+}
+```
+
+### 4.3 步骤 3：生成可执行代码
+模拟 Webpack 的模块化加载器，生成最终可在浏览器运行的代码。
+
+```javascript
+function generateCode(entry) {
+  const graph = JSON.stringify(makeDependenciesGraph(entry));
+
+  return `
+    (function(graph) {
+      // 缓存已加载模块
+      var modules = {};
+
+      function require(moduleId) {
+        if (modules[moduleId]) {
+          return modules[moduleId].exports;
+        }
+
+        // 定义模块
+        var module = (modules[moduleId] = {
+          exports: {}
+        });
+
+        // 执行模块代码
+        (function(require, exports, code) {
+          eval(code);
+        })(
+          // 局部 require，处理相对路径
+          function(localRequire) {
+            return require(graph[moduleId].dependencies[localRequire]);
+          },
+          module.exports,
+          graph[moduleId].code
+        );
+
+        return module.exports;
+      }
+
+      // 启动入口模块
+      require('${entry}');
+    })(${graph});
+  `;
+}
+```
+
+### 4.4 执行打包
+```javascript
+// 生成打包代码
+const code = generateCode('./src/index.js');
+// 输出到文件
+fs.writeFileSync('./dist/bundle.js', code);
+```
+
+## 总结
+- **Loader**：用于转换模块代码，是**函数**，执行顺序为从右到左
+- **Plugin**：用于扩展 Webpack 功能，是**类**，基于事件钩子工作
+- **打包原理**：解析依赖 → 构建依赖图 → 转换代码 → 生成可执行 bundle

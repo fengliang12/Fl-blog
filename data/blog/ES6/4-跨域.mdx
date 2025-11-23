@@ -1,0 +1,242 @@
+---
+title: 跨域问题深度解析：原因、解决方案与实战
+date: '2022-01-16'
+tags: ['ES6']
+draft: false
+summary: 全面解析跨域产生的底层原因、同源策略的安全意义，以及五种主流跨域解决方案的原理、实现与适用场景
+---
+
+## 一、跨域的本质与同源策略
+### 1.1 什么是跨域？
+当两个资源的**协议（Protocol）**、**域名（Host）**、**端口（Port）** 三者中任意一项不同时，即构成跨域。例如：
+- `http://a.com` 与 `https://a.com`（协议不同）
+- `http://a.com` 与 `http://b.com`（域名不同）
+- `http://a.com:80` 与 `http://a.com:8080`（端口不同）
+
+### 1.2 跨域产生的核心原因：同源策略
+同源策略（Same-Origin Policy）是浏览器的核心安全机制，限制不同源的客户端脚本（如JavaScript）在未授权情况下访问对方资源。其核心目的是：
+- 防止恶意网站窃取用户数据（如Cookie、LocalStorage）
+- 阻止未授权的跨站请求伪造（CSRF）
+- 保护敏感接口不被非法调用
+
+**举例**：`a.com` 的JS脚本若直接通过Ajax请求 `b.com` 的数据，浏览器会因同源策略拦截响应，控制台报错：  
+`Access to XMLHttpRequest at 'http://b.com/data' from origin 'http://a.com' has been blocked by CORS policy`
+
+### 1.3 跨域的现实意义
+在现代Web开发中，跨域是普遍存在的合理需求：
+1. **前后端分离架构**：前端（`web.xxx.com`）与后端API（`api.xxx.com`）通常部署在不同域名
+2. **资源分片存储**：静态资源（图片、视频）部署在CDN（`cdn.xxx.com`），与主站域名不同
+3. **微服务拆分**：大型应用拆分为多个子服务，分别部署在不同子域名（如 `user.xxx.com`、`order.xxx.com`）
+4. **第三方服务集成**：调用支付接口（`pay.xxx.com`）、地图API（`map.xxx.com`）等第三方服务
+
+## 二、五种主流跨域解决方案实战
+### 2.1 JSONP：利用脚本标签跨域（仅支持GET）
+#### 原理
+借助 `<script>`、`<img>` 等标签无跨域限制的特性，通过动态创建脚本标签，将请求参数拼接在URL中，服务器返回回调函数包裹的数据，客户端通过全局函数接收结果。
+
+#### 实现步骤
+1. **客户端定义全局回调函数**：
+   ```javascript
+   // 全局函数，用于接收跨域数据
+   function handleData(result) {
+     console.log('跨域数据：', result);
+   }
+   ```
+
+2. **动态创建script标签发起请求**：
+   ```javascript
+   const script = document.createElement('script');
+   // 传递回调函数名给服务器，URL格式：http://目标域名?参数&callback=回调函数名
+   script.src = 'http://api.xxx.com/data?type=1&callback=handleData';
+   document.body.appendChild(script);
+   ```
+
+3. **服务器返回特殊格式响应**（以Node.js为例）：
+   ```javascript
+   const express = require('express');
+   const app = express();
+   app.get('/data', (req, res) => {
+     const { callback } = req.query;
+     const data = { code: 0, message: 'success', result: [1, 2, 3] };
+     // 返回 "handleData({...})"，浏览器会自动执行该函数
+     res.send(`${callback}(${JSON.stringify(data)})`);
+   });
+   app.listen(3000);
+   ```
+
+#### 优缺点
+- **优点**：兼容性好（支持IE低版本），实现简单
+- **缺点**：仅支持GET请求，存在XSS风险（依赖服务器返回安全数据），无法捕获错误
+
+### 2.2 CORS：跨域资源共享（推荐）
+#### 原理
+W3C标准方案，通过服务器设置响应头声明允许跨域的源、方法等信息，浏览器验证通过后放行响应。
+
+#### 实现步骤
+1. **服务器配置响应头**（以Node.js为例）：
+   ```javascript
+   app.use((req, res, next) => {
+     // 允许指定源跨域（*表示允许所有源，生产环境建议精确指定）
+     res.setHeader('Access-Control-Allow-Origin', 'http://web.xxx.com');
+     // 允许的请求方法
+     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
+     // 允许的请求头
+     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+     // 允许携带Cookie（需前端配合设置withCredentials）
+     res.setHeader('Access-Control-Allow-Credentials', 'true');
+     // 预检请求缓存时间（秒），减少OPTIONS请求次数
+     res.setHeader('Access-Control-Max-Age', '86400');
+     next();
+   });
+   ```
+
+2. **客户端请求配置**（Axios为例）：
+   ```javascript
+   axios.get('http://api.xxx.com/data', {
+     // 允许携带Cookie（需与服务器Access-Control-Allow-Credentials配合）
+     withCredentials: true
+   }).then(response => {
+     console.log('跨域数据：', response.data);
+   });
+   ```
+
+#### 关键概念：简单请求与预检请求
+- **简单请求**：满足以下条件，直接发送请求：
+  - 方法为GET、POST、HEAD
+  - 请求头仅含默认字段（如Accept、Content-Type为application/x-www-form-urlencoded等）
+- **复杂请求**：不满足简单请求条件（如PUT方法、自定义头），会先发送OPTIONS预检请求，验证服务器是否允许跨域，通过后再发送真实请求。
+
+#### 优缺点
+- **优点**：支持所有HTTP方法，安全性高，无需前端复杂处理
+- **缺点**：部分老旧浏览器不支持（IE10+支持），复杂请求需处理预检逻辑
+
+### 2.3 代理转发（开发/生产环境通用）
+#### 原理
+通过中间服务器（如Webpack Dev Server、Nginx）转发跨域请求，由于服务器之间通信无跨域限制，从而规避浏览器同源策略。
+
+#### 实现方式
+1. **开发环境：Webpack代理**（vue.config.js）：
+   ```javascript
+   module.exports = {
+     devServer: {
+       proxy: {
+         // 匹配所有以/api开头的请求
+         '/api': {
+           target: 'http://api.xxx.com', // 目标服务器地址
+           changeOrigin: true, // 伪装请求来源为目标服务器域名
+           pathRewrite: { '^/api': '' } // 移除URL中的/api前缀（可选）
+         }
+       }
+     }
+   };
+   ```
+   客户端请求：`axios.get('/api/data')` → 代理转发至 `http://api.xxx.com/data`
+
+2. **生产环境：Nginx反向代理**（nginx.conf）：
+   ```nginx
+   server {
+     listen 80;
+     server_name web.xxx.com;
+
+     # 转发/api请求到目标服务器
+     location /api {
+       proxy_pass http://api.xxx.com; # 目标服务器地址
+       proxy_set_header Host $host; # 传递原始Host头
+       proxy_set_header X-Real-IP $remote_addr; # 传递客户端真实IP
+     }
+   }
+   ```
+
+#### 优缺点
+- **优点**：前端无需修改代码，支持所有请求方法，兼容性无限制
+- **缺点**：需额外配置代理服务器，增加服务端维护成本
+
+### 2.4 postMessage：跨窗口通信
+#### 原理
+HTML5新增API，允许不同源的窗口/iframe之间通过消息传递数据，需双方配合监听消息事件。
+
+#### 实现步骤
+1. **父窗口（http://a.com）向子窗口发送消息**：
+   ```html
+   <iframe id="iframe" src="http://b.com" style="display:none"></iframe>
+   <script>
+     const iframe = document.getElementById('iframe');
+     // 等待iframe加载完成
+     iframe.onload = () => {
+       // 发送消息：参数1为数据，参数2为目标域（*表示允许所有域）
+       iframe.contentWindow.postMessage('来自a.com的消息', 'http://b.com');
+     };
+
+     // 监听子窗口的回复
+     window.addEventListener('message', (event) => {
+       // 验证消息来源（安全措施）
+       if (event.origin === 'http://b.com') {
+         console.log('收到b.com的回复：', event.data);
+       }
+     });
+   </script>
+   ```
+
+2. **子窗口（http://b.com）接收并回复消息**：
+   ```javascript
+   // 监听父窗口消息
+   window.addEventListener('message', (event) => {
+     // 验证消息来源
+     if (event.origin === 'http://a.com') {
+       console.log('收到a.com的消息：', event.data);
+       // 回复消息
+       event.source.postMessage('来自b.com的回复', event.origin);
+     }
+   });
+   ```
+
+#### 适用场景
+- 跨域iframe通信（如嵌入第三方登录页面）
+- 多窗口间数据同步
+
+### 2.5 document.domain：主域名相同的子域跨域
+#### 原理
+当两个页面主域名相同（如 `a.xxx.com` 和 `b.xxx.com`），可通过设置 `document.domain = 'xxx.com'` 统一主域名，实现跨域访问。
+
+#### 实现步骤
+1. **页面a.xxx.com**：
+   ```javascript
+   document.domain = 'xxx.com'; // 统一主域名
+   const iframe = document.createElement('iframe');
+   iframe.src = 'http://b.xxx.com/page';
+   iframe.onload = () => {
+     // 可访问iframe中的数据
+     console.log(iframe.contentWindow.data);
+   };
+   document.body.appendChild(iframe);
+   ```
+
+2. **页面b.xxx.com**：
+   ```javascript
+   document.domain = 'xxx.com'; // 必须与父页面设置一致
+   window.data = { name: 'test' }; // 暴露数据供父页面访问
+   ```
+
+#### 限制
+- 仅适用于主域名相同的子域（如 `a.xxx.com` 与 `b.xxx.com`）
+- 无法跨主域名使用（如 `xxx.com` 与 `yyy.com`）
+
+## 三、解决方案对比与选型建议
+| 方案 | 适用场景 | 优点 | 缺点 |
+|------|----------|------|------|
+| JSONP | 老旧浏览器、仅需GET请求 | 兼容性好 | 仅支持GET，有XSS风险 |
+| CORS | 现代浏览器、前后端分离项目 | 标准方案，支持所有方法 | 部分旧浏览器不支持 |
+| 代理转发 | 开发/生产环境通用，需隐藏真实接口 | 前端无感知，兼容性强 | 需配置代理服务器 |
+| postMessage | 跨窗口/iframe通信 | 灵活，支持复杂数据 | 需手动验证消息来源 |
+| document.domain | 主域名相同的子域 | 实现简单 | 适用场景有限 |
+
+### 选型优先级
+1. **首选CORS**：符合标准，配置简单，适合现代Web应用
+2. **次选代理转发**：开发环境用Webpack代理，生产环境用Nginx，无需前端适配
+3. **特殊场景**：跨窗口通信选postMessage，兼容旧浏览器选JSONP
+
+## 四、安全注意事项
+1. **CORS谨慎使用`*`**：生产环境应精确指定允许的源（如 `http://web.xxx.com`），避免任意域名访问
+2. **验证消息来源**：postMessage需通过 `event.origin` 验证发送方，防止恶意消息
+3. **JSONP防XSS**：服务器需过滤回调函数名，避免注入恶意代码
+4. **敏感数据加密**：跨域传输敏感信息（如Token）时需加密，防止中间人攻击

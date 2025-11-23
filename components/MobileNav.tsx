@@ -28,7 +28,7 @@ const MobileNav = () => {
 
   return (
     <>
-      <button aria-label="Toggle Menu" onClick={onToggleNav} className="sm:hidden">
+      <button aria-label="切换菜单" onClick={onToggleNav} className="sm:hidden">
         <svg
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 20 20"
@@ -76,7 +76,7 @@ const MobileNav = () => {
                   <Link
                     key={link.title}
                     href={link.href}
-                    className="hover:text-primary-500 dark:hover:text-primary-400 mb-4 py-2 pr-4 text-2xl font-bold tracking-widest text-gray-900 outline outline-0 dark:text-gray-100"
+                    className="nav-pill hover:text-primary-500 mb-4 px-4 py-2 text-2xl font-bold tracking-widest text-gray-900"
                     onClick={onToggleNav}
                   >
                     {link.title}
@@ -85,8 +85,8 @@ const MobileNav = () => {
               </nav>
 
               <button
-                className="hover:text-primary-500 dark:hover:text-primary-400 fixed top-7 right-4 z-80 h-16 w-16 p-4 text-gray-900 dark:text-gray-100"
-                aria-label="Toggle Menu"
+                className="hover:text-primary-500 fixed top-7 right-4 z-80 h-16 w-16 p-4 text-gray-900"
+                aria-label="切换菜单"
                 onClick={onToggleNav}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">

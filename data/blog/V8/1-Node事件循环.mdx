@@ -1,0 +1,211 @@
+---
+title: Node.js事件循环与libuv核心原理全解析（含面试题实战）
+date: '2024-01-20'
+tags: ['V8引擎', 'libuv', '事件循环']
+draft: false
+summary: 系统梳理libuv事件循环的阶段划分、观察者类型，对比Node.js与浏览器事件循环差异，结合经典面试题深入剖析执行机制
+---
+
+## 一、libuv事件循环的核心阶段（六大阶段）
+libuv事件循环是Node.js实现非阻塞I/O的底层核心，按固定顺序执行各阶段任务，每个阶段对应专属回调队列：
+
+### 1. timers（定时器阶段）
+- **核心作用**：执行`setTimeout`/`setInterval`的到期回调函数；
+- **关键细节**：定时器回调有专属队列，优先级高于I/O回调，`setTimeout(fn, 0)`并非立即执行，需等待本轮timers阶段或下轮循环；
+
+**示例**：
+```javascript
+setTimeout(() => {
+  console.log('timers阶段执行');
+}, 0);
+```
+
+### 2. pending callbacks（待处理回调阶段）
+- **核心作用**：执行上一轮事件循环中延迟到当前轮次的系统操作回调；
+- **典型场景**：TCP连接失败的错误回调、部分操作系统异步操作的延迟回调；
+
+**示例**：
+```javascript
+// 模拟TCP连接失败的回调会进入该阶段
+const net = require('net');
+const client = net.connect({ port: 12345 }, () => {});
+client.on('error', (err) => {
+  console.log('pending callbacks阶段执行'); // 连接失败回调在此阶段触发
+});
+```
+
+### 3. idle/prepare（空闲/准备阶段）
+- **核心作用**：libuv内部使用阶段，开发者无需关注；
+- **细节**：idle用于计算事件循环空闲时间，prepare为poll阶段做准备工作；
+
+### 4. poll（轮询阶段）
+- **核心作用**：处理I/O事件回调（文件/网络请求等），是事件循环的核心阶段；
+- **执行逻辑**：
+  - 若poll队列非空：同步执行队列中的I/O回调，直到队列为空或达到系统限制；
+  - 若poll队列为空：
+    - 存在`setImmediate`回调 → 直接进入check阶段；
+    - 无`setImmediate`回调 → 等待新I/O事件加入队列，若有timer到期则跳回timers阶段；
+
+**示例**：
+```javascript
+const fs = require('fs');
+fs.readFile('./test.txt', () => {
+  console.log('poll阶段执行I/O回调'); // 文件读取完成回调在此阶段触发
+});
+```
+
+### 5. check（检查阶段）
+- **核心作用**：专门执行`setImmediate`的回调函数；
+- **执行时机**：poll阶段结束后立即触发，优先级高于下一轮timers阶段（若在I/O回调内同时存在`setTimeout`和`setImmediate`）；
+
+**示例**：
+```javascript
+fs.readFile('./test.txt', () => {
+  setTimeout(() => console.log('timers'), 0);
+  setImmediate(() => console.log('check')); // 优先执行
+});
+```
+
+### 6. close callbacks（关闭回调阶段）
+- **核心作用**：处理I/O资源关闭的回调函数；
+- **典型场景**：Socket连接断开、文件描述符关闭、`stream.destroy()`的回调；
+
+**示例**：
+```javascript
+const net = require('net');
+const server = net.createServer();
+server.on('close', () => {
+  console.log('close callbacks阶段执行'); // 服务器关闭回调在此阶段触发
+});
+server.close();
+```
+
+
+## 二、libuv的观察者类型及作用
+观察者是libuv监听事件的“传感器”，负责将事件回调分发到对应阶段队列，主要包含五类：
+
+### 1. 定时器观察者
+- **监听对象**：`setTimeout`/`setInterval`的到期事件；
+- **触发阶段**：timers阶段；
+- **核心逻辑**：维护定时器队列，按到期时间排序，到期后将回调放入timers队列。
+
+### 2. I/O观察者
+- **监听对象**：文件/网络描述符的I/O事件（如可读/可写）；
+- **触发阶段**：poll阶段；
+- **核心逻辑**：基于epoll/kqueue（不同系统）实现I/O多路复用，监听事件就绪后触发回调。
+
+### 3. 检查观察者
+- **监听对象**：`setImmediate`的调用事件；
+- **触发阶段**：check阶段；
+- **核心逻辑**：`setImmediate`调用时注册观察者，poll阶段结束后触发回调。
+
+### 4. 空闲观察者
+- **监听对象**：事件循环的空闲状态；
+- **触发阶段**：idle阶段；
+- **核心逻辑**：事件循环空闲时触发，用于低优先级背景任务（如内存清理）。
+
+### 5. 准备观察者
+- **监听对象**：poll阶段的准备信号；
+- **触发阶段**：prepare阶段；
+- **核心逻辑**：poll阶段执行前触发，用于初始化I/O轮询的参数配置。
+
+
+## 三、Node.js与浏览器事件循环的核心差异
+| 特性维度         | Node.js事件循环（libuv）| 浏览器事件循环                          |
+|------------------|-----------------------------------------|-----------------------------------------|
+| 底层实现         | 基于libuv库（C语言），分6个阶段         | 基于浏览器内核（Blink/WebKit），分宏/微任务 |
+| 微任务执行时机   | 每个阶段结束后执行（`process.nextTick`优先级最高） | 每个宏任务执行后清空所有微任务          |
+| 核心关注场景     | 后端I/O处理（文件/网络）| 前端渲染（重绘/回流）+ 用户交互        |
+| 特殊API支持      | `setImmediate`/`process.nextTick`       | `requestAnimationFrame`/`MutationObserver` |
+| 定时器精度       | 受事件循环阶段影响，精度约1ms            | 受浏览器渲染帧率影响，精度约4ms         |
+
+**示例对比**：
+```javascript
+// Node.js环境：先执行nextTick（微任务）→ timers → check
+console.log('同步代码');
+process.nextTick(() => console.log('nextTick微任务'));
+setTimeout(() => console.log('timers阶段'), 0);
+setImmediate(() => console.log('check阶段'));
+
+// 浏览器环境：先执行Promise（微任务）→ setTimeout（宏任务）
+console.log('同步代码');
+Promise.resolve().then(() => console.log('Promise微任务'));
+setTimeout(() => console.log('宏任务setTimeout'), 0);
+```
+
+
+## 四、经典面试题解析：I/O回调内的执行顺序
+### 题目：分析以下代码输出顺序
+```javascript
+const fs = require('fs');
+
+// 场景1：I/O回调内的setTimeout vs setImmediate
+fs.readFile('./test.txt', () => {
+  setTimeout(() => console.log('1: setTimeout'), 0);
+  setImmediate(() => console.log('1: setImmediate'));
+});
+
+// 场景2：同步代码中的setTimeout vs setImmediate
+setTimeout(() => console.log('2: setTimeout'), 0);
+setImmediate(() => console.log('2: setImmediate'));
+```
+
+### 解析：
+1. **场景1输出**：`1: setImmediate` → `1: setTimeout`  
+   - I/O回调在poll阶段执行，执行完后poll队列为空，直接进入check阶段执行`setImmediate`；  
+   - `setTimeout`需等待下一轮timers阶段执行。
+
+2. **场景2输出**：顺序不确定  
+   - 同步代码执行时，`setTimeout`可能先进入timers队列，也可能`setImmediate`先进入check队列；  
+   - 取决于事件循环启动时timer是否到期，因此顺序不固定。
+
+
+## 五、libuv事件循环的本质（伪代码）
+```javascript
+// libuv事件循环核心逻辑伪代码
+while (eventLoop.isAlive()) {
+  // 1. timers阶段：执行到期定时器回调
+  timersPhase.execute();
+  
+  // 2. pending callbacks阶段：执行延迟系统回调
+  pendingCallbacksPhase.execute();
+  
+  // 3. idle/prepare阶段：内部准备工作
+  idlePhase.execute();
+  preparePhase.execute();
+  
+  // 4. poll阶段：处理I/O事件，可能阻塞等待
+  const timeout = pollPhase.getTimeout();
+  pollPhase.waitForIOEvents(timeout);
+  pollPhase.execute();
+  
+  // 5. check阶段：执行setImmediate回调
+  checkPhase.execute();
+  
+  // 6. close callbacks阶段：执行关闭回调
+  closeCallbacksPhase.execute();
+  
+  // 执行所有微任务（nextTick/Promise）
+  microtasks.execute();
+}
+```
+
+
+```mermaid
+flowchart TD
+    A[事件循环启动] --> B[timers阶段：执行setTimeout/setInterval]
+    B --> C[pending callbacks阶段：执行延迟系统回调]
+    C --> D[idle/prepare阶段：内部准备]
+    D --> E[poll阶段：处理I/O事件/等待新事件]
+    E --> F{是否有setImmediate回调？}
+    F -- 是 --> G[check阶段：执行setImmediate]
+    F -- 否 --> E
+    G --> H[close callbacks阶段：执行关闭回调]
+    H --> I[执行微任务：nextTick/Promise]
+    I --> J{是否还有待处理任务？}
+    J -- 是 --> B
+    J -- 否 --> K[事件循环退出]
+    
+    %% 阶段跳转逻辑
+    E -->|timer到期| B
+    ```

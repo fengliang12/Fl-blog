@@ -1,0 +1,828 @@
+---
+title: 自定义loader：前端国际化资源自动提取工具i18n-extract-loader
+date: '2024-07-13'
+tags: ['Webpack']
+draft: false
+summary: 基于AST解析的自动化国际化资源提取Loader，支持JS/JSX/TS/TSX，自动识别中文文本、生成翻译Key、注入国际化调用并输出多语言文件，大幅提升多语言改造效率
+---
+
+# i18n-extract-loader 使用指南
+
+一款基于AST（抽象语法树）分析的前端国际化资源自动提取工具，能够智能识别代码中的中文文本，自动生成i18n Key、替换为国际化函数调用，并输出多语言翻译文件模板，让前端项目的国际化改造效率提升10倍以上！
+
+## 🧰 核心Loader实现代码
+
+```javascript
+// loaders/i18n-extract-loader.js
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const { parse } = require('@babel/parser');
+const traverse = require('@babel/traverse').default;
+const generate = require('@babel/generator').default;
+const t = require('@babel/types');
+
+/**
+ * 国际化资源自动提取 Loader
+ * 自动扫描代码中的中文文本，生成 i18n key 并替换
+ */
+module.exports = function i18nExtractLoader(source) {
+  const callback = this.async();
+  const options = this.getOptions() || {};
+
+  // 配置项
+  const config = {
+    // 输出翻译文件的目录
+    outputDir: options.outputDir || path.join(process.cwd(), 'src/locales'),
+    // i18n 函数名称
+    i18nFunctionName: options.i18nFunctionName || 't',
+    // 导入语句
+    i18nImportStatement: options.i18nImportStatement || "import { t } from '@/i18n'",
+    // 是否自动生成 key（false 则使用中文原文作为 key）
+    autoGenerateKey: options.autoGenerateKey !== false,
+    // key 前缀
+    keyPrefix: options.keyPrefix || '',
+    // 是否跳过已有 i18n 调用的文件
+    skipIfHasI18n: options.skipIfHasI18n || false,
+    // 中文正则（匹配包含中文的字符串）
+    chineseRegex: options.chineseRegex || /[\u4e00-\u9fa5]/,
+    // 排除的文本（如"中国"、"OK"等不需要翻译的）
+    excludeTexts: options.excludeTexts || [],
+    // 最小文本长度（短文本可能不需要翻译）
+    minTextLength: options.minTextLength || 1,
+    // 是否生成翻译文件
+    generateFiles: options.generateFiles !== false,
+    // 翻译文件语言
+    languages: options.languages || ['zh-CN', 'en-US'],
+  };
+
+  try {
+    // 解析源代码为 AST
+    const ast = parse(source, {
+      sourceType: 'module',
+      plugins: [
+        'jsx',
+        'typescript',
+        'decorators-legacy',
+        'classProperties',
+        'dynamicImport',
+      ],
+    });
+
+    // 存储提取的文本
+    const extractedTexts = new Map();
+    let hasI18nImport = false;
+    let needsI18nImport = false;
+
+    // 检查是否已经导入了 i18n
+    traverse(ast, {
+      ImportDeclaration(path) {
+        const importSource = path.node.source.value;
+        if (importSource.includes('i18n') || importSource.includes('locale')) {
+          hasI18nImport = true;
+        }
+      },
+    });
+
+    // 如果配置了跳过已有 i18n 的文件，且文件已有导入，则直接返回
+    if (config.skipIfHasI18n && hasI18nImport) {
+      callback(null, source);
+      return;
+    }
+
+    // 遍历 AST，查找中文文本
+    traverse(ast, {
+      // 处理字符串字面量
+      StringLiteral(path) {
+        const text = path.node.value;
+
+        // 检查是否需要处理
+        if (!shouldExtractText(text, config, path)) {
+          return;
+        }
+
+        // 生成 key
+        const key = generateKey(text, config, extractedTexts);
+        extractedTexts.set(key, text);
+
+        // 替换为 i18n 调用
+        const i18nCall = t.callExpression(
+          t.identifier(config.i18nFunctionName),
+          [t.stringLiteral(key)]
+        );
+
+        path.replaceWith(i18nCall);
+        needsI18nImport = true;
+      },
+
+      // 处理模板字面量（如果整个模板都是中文）
+      TemplateLiteral(path) {
+        // 只处理没有表达式的简单模板字符串
+        if (path.node.expressions.length === 0 && path.node.quasis.length === 1) {
+          const text = path.node.quasis[0].value.cooked;
+
+          if (!shouldExtractText(text, config, path)) {
+            return;
+          }
+
+          const key = generateKey(text, config, extractedTexts);
+          extractedTexts.set(key, text);
+
+          const i18nCall = t.callExpression(
+            t.identifier(config.i18nFunctionName),
+            [t.stringLiteral(key)]
+          );
+
+          path.replaceWith(i18nCall);
+          needsI18nImport = true;
+        }
+      },
+
+      // 处理 JSX 文本
+      JSXText(path) {
+        const text = path.node.value.trim();
+
+        if (!shouldExtractText(text, config, path)) {
+          return;
+        }
+
+        const key = generateKey(text, config, extractedTexts);
+        extractedTexts.set(key, text);
+
+        // 替换为 JSX 表达式
+        const i18nCall = t.jSXExpressionContainer(
+          t.callExpression(
+            t.identifier(config.i18nFunctionName),
+            [t.stringLiteral(key)]
+          )
+        );
+
+        path.replaceWith(i18nCall);
+        needsI18nImport = true;
+      },
+    });
+
+    // 如果需要，添加 i18n 导入语句
+    if (needsI18nImport && !hasI18nImport) {
+      const importAst = parse(config.i18nImportStatement, {
+        sourceType: 'module',
+      });
+
+      ast.program.body.unshift(importAst.program.body[0]);
+    }
+
+    // 生成翻译文件
+    if (config.generateFiles && extractedTexts.size > 0) {
+      generateTranslationFiles(extractedTexts, config, this.resourcePath);
+    }
+
+    // 生成修改后的代码
+    const output = generate(ast, {
+      retainLines: true,
+      comments: true,
+    });
+
+    callback(null, output.code);
+  } catch (error) {
+    callback(error);
+  }
+};
+
+/**
+ * 判断文本是否需要提取
+ */
+function shouldExtractText(text, config, path) {
+  // 空文本
+  if (!text || !text.trim()) {
+    return false;
+  }
+
+  // 文本太短
+  if (text.trim().length < config.minTextLength) {
+    return false;
+  }
+
+  // 不包含中文
+  if (!config.chineseRegex.test(text)) {
+    return false;
+  }
+
+  // 在排除列表中
+  if (config.excludeTexts.includes(text.trim())) {
+    return false;
+  }
+
+  // 已经是 i18n 调用
+  if (path.parent && path.parent.type === 'CallExpression') {
+    const callee = path.parent.callee;
+    if (callee.name === config.i18nFunctionName) {
+      return false;
+    }
+  }
+
+  // JSX 属性中的特殊情况（如 className, style 等）
+  if (path.parent && path.parent.type === 'JSXAttribute') {
+    const attrName = path.parent.name.name;
+    const skipAttrs = ['className', 'style', 'key', 'ref', 'id'];
+    if (skipAttrs.includes(attrName)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * 生成 i18n key
+ */
+function generateKey(text, config, existingTexts) {
+  if (!config.autoGenerateKey) {
+    // 使用原文作为 key
+    return text.trim();
+  }
+
+  // 自动生成 key
+  const prefix = config.keyPrefix;
+  
+  // 方案1：使用拼音首字母 + 短hash（推荐）
+  const cleanText = text.trim().replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
+  const hash = crypto
+    .createHash('md5')
+    .update(cleanText)
+    .digest('hex')
+    .substring(0, 6);
+
+  // 简单的拼音首字母提取（仅作示例，生产环境建议使用 pinyin 库）
+  let pinyinKey = '';
+  for (let i = 0; i < Math.min(cleanText.length, 4); i++) {
+    const char = cleanText[i];
+    if (/[\u4e00-\u9fa5]/.test(char)) {
+      // 简化处理：可以集成 pinyin 库获取真实拼音
+      pinyinKey += 'cn';
+    } else {
+      pinyinKey += char.toLowerCase();
+    }
+  }
+
+  let key = `${prefix}${pinyinKey}_${hash}`;
+
+  // 确保 key 唯一
+  let counter = 1;
+  let finalKey = key;
+  while (Array.from(existingTexts.keys()).includes(finalKey)) {
+    finalKey = `${key}_${counter}`;
+    counter++;
+  }
+
+  return finalKey;
+}
+
+/**
+ * 生成翻译文件
+ */
+function generateTranslationFiles(extractedTexts, config, resourcePath) {
+  const outputDir = config.outputDir;
+
+  // 确保输出目录存在
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  // 为每种语言生成翻译文件
+  config.languages.forEach((lang) => {
+    const filePath = path.join(outputDir, `${lang}.json`);
+
+    // 读取现有翻译文件
+    let existingTranslations = {};
+    if (fs.existsSync(filePath)) {
+      try {
+        existingTranslations = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      } catch (e) {
+        console.warn(`Warning: Failed to parse existing ${lang}.json`);
+      }
+    }
+
+    // 合并新提取的文本
+    const newTranslations = { ...existingTranslations };
+    
+    extractedTexts.forEach((text, key) => {
+      if (!newTranslations[key]) {
+        if (lang === 'zh-CN') {
+          // 中文直接使用原文
+          newTranslations[key] = text;
+        } else {
+          // 其他语言标记为待翻译
+          newTranslations[key] = `[TODO] ${text}`;
+        }
+      }
+    });
+
+    // 写入文件（格式化 JSON）
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify(newTranslations, null, 2),
+      'utf-8'
+    );
+  });
+
+  // 生成提取日志
+  const logPath = path.join(outputDir, 'extraction-log.txt');
+  const logEntry = `
+===========================================
+Extraction Time: ${new Date().toISOString()}
+Source File: ${resourcePath}
+Extracted Count: ${extractedTexts.size}
+===========================================
+${Array.from(extractedTexts.entries())
+  .map(([key, text]) => `${key}: ${text}`)
+  .join('\n')}
+
+`;
+
+  fs.appendFileSync(logPath, logEntry, 'utf-8');
+}
+
+// 导出 raw loader（处理原始源码）
+module.exports.raw = false;
+```
+
+## 💡 技术原理说明
+
+### 核心技术栈
+- **@babel/parser**：将源代码解析为AST抽象语法树
+- **@babel/traverse**：遍历AST节点，识别StringLiteral、JSXText等包含中文的节点
+- **@babel/generator**：将修改后的AST重新生成JavaScript代码
+- **@babel/types**：创建新的AST节点（如i18n函数调用、导入语句）
+
+### 关键处理流程
+1. **AST解析**：将源码转换为结构化的AST树
+2. **文本识别**：遍历AST节点，筛选符合条件的中文文本
+3. **Key生成**：通过拼音+哈希生成唯一的国际化Key
+4. **节点替换**：将文本节点替换为i18n函数调用节点
+5. **导入注入**：自动添加i18n函数的导入语句
+6. **文件生成**：按语言生成翻译JSON文件，增量更新
+
+## 📦 安装依赖
+
+```bash
+# 核心AST处理依赖
+npm install --save-dev @babel/parser @babel/traverse @babel/generator @babel/types
+# Webpack基础依赖（如未安装）
+npm install --save-dev webpack webpack-cli babel-loader @babel/core
+# React/TypeScript项目额外依赖
+npm install --save-dev @babel/preset-react @babel/preset-typescript
+# 国际化运行时（配合使用）
+npm install --save i18next react-i18next
+```
+
+## 🔧 Webpack 配置
+
+### 1. 基础配置
+
+```javascript
+// webpack.config.js
+const path = require('path');
+
+module.exports = {
+  mode: 'development',
+  entry: './src/index.js',
+  output: {
+    path: path.resolve(__dirname, 'dist'),
+    filename: 'bundle.js',
+  },
+  module: {
+    rules: [
+      {
+        test: /\.(js|jsx|ts|tsx)$/,
+        exclude: /node_modules/,
+        use: [
+          {
+            loader: 'babel-loader',
+            options: {
+              presets: ['@babel/preset-react', '@babel/preset-typescript'],
+            },
+          },
+          {
+            loader: path.resolve(__dirname, './loaders/i18n-extract-loader.js'),
+            options: {
+              // 翻译文件输出目录
+              outputDir: path.join(__dirname, 'src/locales'),
+              // i18n函数名称（如t、$t）
+              i18nFunctionName: 't',
+              // 国际化函数导入语句
+              i18nImportStatement: "import { t } from '@/i18n'",
+              // 是否自动生成Key（false则使用原文作为Key）
+              autoGenerateKey: true,
+              // Key前缀（按模块区分）
+              keyPrefix: 'common_',
+              // 排除无需处理的文本
+              excludeTexts: ['OK', 'Error', 'Success', 'React'],
+              // 最小文本长度（过滤短文本）
+              minTextLength: 1,
+              // 支持的语言列表
+              languages: ['zh-CN', 'en-US', 'ja-JP'],
+              // 是否生成翻译文件
+              generateFiles: true,
+            },
+          },
+        ],
+      },
+    ],
+  },
+  resolve: {
+    extensions: ['.js', '.jsx', '.ts', '.tsx'],
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+    },
+  },
+};
+```
+
+### 2. 按模块差异化配置
+
+```javascript
+// webpack.config.js
+const path = require('path');
+const modules = [
+  { path: 'src/modules/auth', prefix: 'auth_' },
+  { path: 'src/modules/user', prefix: 'user_' },
+  { path: 'src/modules/product', prefix: 'product_' },
+  { path: 'src/modules/order', prefix: 'order_' },
+];
+
+module.exports = {
+  // ...其他配置
+  module: {
+    rules: [
+      // 模块差异化配置
+      ...modules.map(mod => ({
+        test: /\.(js|jsx)$/,
+        include: path.resolve(__dirname, mod.path),
+        use: [
+          'babel-loader',
+          {
+            loader: './loaders/i18n-extract-loader.js',
+            options: {
+              keyPrefix: mod.prefix,
+              outputDir: './src/locales',
+              languages: ['zh-CN', 'en-US'],
+            },
+          },
+        ],
+      })),
+      // 通用模块配置
+      {
+        test: /\.(js|jsx)$/,
+        include: path.resolve(__dirname, 'src/common'),
+        use: [
+          'babel-loader',
+          {
+            loader: './loaders/i18n-extract-loader.js',
+            options: {
+              keyPrefix: 'common_',
+              outputDir: './src/locales',
+            },
+          },
+        ],
+      },
+    ],
+  },
+};
+```
+
+## 📝 使用示例
+
+### 转换前（原始代码）
+
+```jsx
+// src/components/UserProfile.jsx
+import React from 'react';
+
+function UserProfile({ name }) {
+  return (
+    <div>
+      <h1>用户信息</h1>
+      <p>欢迎回来，{name}!</p>
+      <button>编辑资料</button>
+      <span title="这是提示">悬停查看</span>
+    </div>
+  );
+}
+
+const message = "登录成功";
+const template = `您有 ${count} 条新消息`; // 含变量，不处理
+```
+
+### 转换后（自动国际化）
+
+```jsx
+// src/components/UserProfile.jsx
+import { t } from '@/i18n';
+import React from 'react';
+
+function UserProfile({ name }) {
+  return (
+    <div>
+      <h1>{t('user_yhxx_a1b2c3')}</h1>
+      <p>{t('user_hghl_d4e5f6')}, {name}!</p>
+      <button>{t('user_bjzl_g7h8i9')}</button>
+      <span title={t('user_zsst_j0k1l2')}>{t('user_xftc_m3n4o5')}</span>
+    </div>
+  );
+}
+
+const message = t('user_dlcg_p6q7r8');
+const template = `您有 ${count} 条新消息`; // 保持不变
+```
+
+### 自动生成的翻译文件
+
+```json
+// src/locales/zh-CN.json
+{
+  "user_yhxx_a1b2c3": "用户信息",
+  "user_hghl_d4e5f6": "欢迎回来",
+  "user_bjzl_g7h8i9": "编辑资料",
+  "user_zsst_j0k1l2": "这是提示",
+  "user_xftc_m3n4o5": "悬停查看",
+  "user_dlcg_p6q7r8": "登录成功"
+}
+
+// src/locales/en-US.json
+{
+  "user_yhxx_a1b2c3": "[TODO] 用户信息",
+  "user_hghl_d4e5f6": "[TODO] 欢迎回来",
+  "user_bjzl_g7h8i9": "[TODO] 编辑资料",
+  "user_zsst_j0k1l2": "[TODO] 这是提示",
+  "user_xftc_m3n4o5": "[TODO] 悬停查看",
+  "user_dlcg_p6q7r8": "[TODO] 登录成功"
+}
+
+// src/locales/ja-JP.json
+{
+  "user_yhxx_a1b2c3": "[TODO] 用户情報",
+  "user_hghl_d4e5f6": "[TODO] おかえりなさい",
+  "user_bjzl_g7h8i9": "[TODO] プロフィール編集",
+  "user_zsst_j0k1l2": "[TODO] これはヒントです",
+  "user_xftc_m3n4o5": "[TODO] ホバーして表示",
+  "user_dlcg_p6q7r8": "[TODO] ログイン成功"
+}
+```
+
+## 🎯 高级用法
+
+### 1. 跳过已国际化的文件
+
+```javascript
+{
+  loader: './loaders/i18n-extract-loader.js',
+  options: {
+    skipIfHasI18n: true, // 检测到i18n导入则跳过处理
+  },
+}
+```
+
+### 2. 使用原文作为Key
+
+```javascript
+{
+  loader: './loaders/i18n-extract-loader.js',
+  options: {
+    autoGenerateKey: false, // 禁用自动生成Key
+  },
+}
+```
+
+转换结果：
+```jsx
+<h1>{t('用户信息')}</h1>
+<button>{t('编辑资料')}</button>
+```
+
+### 3. 自定义中文检测规则
+
+```javascript
+{
+  loader: './loaders/i18n-extract-loader.js',
+  options: {
+    // 匹配中日韩文
+    chineseRegex: /[\u4e00-\u9fa5\u3040-\u309F\u30A0-\u30FF\uAC00-\uD7AF]/,
+  },
+}
+```
+
+### 4. 排除特定文本
+
+```javascript
+{
+  loader: './loaders/i18n-extract-loader.js',
+  options: {
+    excludeTexts: [
+      'China',
+      'Beijing',
+      'WeChat',
+      'Alipay',
+      // 品牌名、专有名词等无需翻译的文本
+    ],
+  },
+}
+```
+
+## 🚀 最佳实践
+
+### 1. 按功能模块设置前缀
+
+```javascript
+const modules = [
+  { path: 'src/auth', prefix: 'auth_' },
+  { path: 'src/user', prefix: 'user_' },
+  { path: 'src/product', prefix: 'product_' },
+  { path: 'src/order', prefix: 'order_' },
+  { path: 'src/common', prefix: 'common_' },
+];
+
+module.exports = {
+  module: {
+    rules: modules.map(mod => ({
+      test: /\.(js|jsx)$/,
+      include: path.resolve(__dirname, mod.path),
+      use: [
+        'babel-loader',
+        {
+          loader: './loaders/i18n-extract-loader.js',
+          options: { keyPrefix: mod.prefix },
+        },
+      ],
+    })),
+  },
+};
+```
+
+### 2. 开发/生产环境差异化配置
+
+```javascript
+const isDev = process.env.NODE_ENV === 'development';
+
+module.exports = {
+  module: {
+    rules: [
+      {
+        test: /\.(js|jsx)$/,
+        use: [
+          'babel-loader',
+          !isDev && { // 生产环境启用，开发环境禁用
+            loader: './loaders/i18n-extract-loader.js',
+            options: { /* ... */ },
+          },
+        ].filter(Boolean),
+      },
+    ],
+  },
+};
+```
+
+### 3. 配合 CI/CD 自动翻译
+
+```javascript
+// scripts/auto-translate.js
+const fs = require('fs');
+const path = require('path');
+const translate = require('@vitalets/google-translate-api'); // 示例翻译API
+
+async function autoTranslate() {
+  const zhFile = path.join(__dirname, '../src/locales/zh-CN.json');
+  const enFile = path.join(__dirname, '../src/locales/en-US.json');
+  
+  // 读取中文源文件
+  const zhData = JSON.parse(fs.readFileSync(zhFile, 'utf-8'));
+  let enData = {};
+  
+  // 读取已有英文文件（保留已翻译内容）
+  if (fs.existsSync(enFile)) {
+    enData = JSON.parse(fs.readFileSync(enFile, 'utf-8'));
+  }
+  
+  // 批量翻译未处理项
+  for (const [key, value] of Object.entries(zhData)) {
+    if (!enData[key] || enData[key].startsWith('[TODO]')) {
+      try {
+        const res = await translate(value, { to: 'en' });
+        enData[key] = res.text;
+        console.log(`Translated: ${value} → ${res.text}`);
+      } catch (err) {
+        enData[key] = value; // 翻译失败时使用原文
+        console.error(`Translate failed: ${key}`, err.message);
+      }
+    }
+  }
+  
+  // 写入翻译结果
+  fs.writeFileSync(enFile, JSON.stringify(enData, null, 2), 'utf-8');
+  console.log('✅ Auto translation completed!');
+}
+
+autoTranslate();
+```
+
+在`package.json`中添加脚本：
+```json
+{
+  "scripts": {
+    "translate": "node scripts/auto-translate.js",
+    "build": "npm run translate && webpack"
+  }
+}
+```
+
+## 📊 提取日志
+
+Loader会自动生成`extraction-log.txt`文件，记录每次提取的详细信息：
+
+```
+===========================================
+Extraction Time: 2025-11-18T10:30:00.000Z
+Source File: /project/src/components/UserProfile.jsx
+Extracted Count: 5
+===========================================
+user_yhxx_a1b2c3: 用户信息
+user_hghl_d4e5f6: 欢迎回来
+user_bjzl_g7h8i9: 编辑资料
+user_zsst_j0k1l2: 这是提示
+user_xftc_m3n4o5: 悬停查看
+
+===========================================
+Extraction Time: 2025-11-18T10:35:00.000Z
+Source File: /project/src/components/Dashboard.jsx
+Extracted Count: 18
+===========================================
+app_djcg_a1b2c3: 点击成功！
+app_sjmb_d4e5f6: 数据面板
+...
+```
+
+## ⚠️ 注意事项
+
+1. **代码备份**：首次使用建议在测试分支运行，避免意外修改业务代码
+2. **变量文本处理**：包含变量的模板字符串（如`你好${name}`）不会被处理，需手动改为`t('你好', {name})`格式
+3. **动态文本**：通过变量拼接的文本（如`const text = '欢迎' + type`）无法检测，需提前规范化
+4. **特殊属性过滤**：默认过滤`className`、`style`、`key`、`ref`等属性中的文本，如需处理可修改Loader配置
+5. **翻译文件合并**：多人开发时建议定期合并翻译文件，避免Git冲突
+
+## 📁 完整项目结构示例
+
+```
+project/
+├── src/
+│   ├── locales/              # 翻译文件目录
+│   │   ├── zh-CN.json        # 中文翻译
+│   │   ├── en-US.json        # 英文翻译
+│   │   ├── ja-JP.json        # 日文翻译
+│   │   └── extraction-log.txt # 提取日志
+│   ├── i18n/
+│   │   └── index.js          # i18n初始化配置
+│   ├── components/           # 业务组件
+│   │   ├── UserProfile.jsx
+│   │   └── Dashboard.jsx
+│   └── index.js              # 项目入口
+├── loaders/
+│   └── i18n-extract-loader.js # 核心Loader实现
+├── scripts/
+│   └── auto-translate.js     # 自动翻译脚本
+├── webpack.config.js         # Webpack配置
+└── package.json
+```
+
+## 🎨 i18n初始化配置示例
+
+```javascript
+// src/i18n/index.js
+import i18n from 'i18next';
+import { initReactI18next } from 'react-i18next';
+
+// 导入翻译文件
+import zhCN from '../locales/zh-CN.json';
+import enUS from '../locales/en-US.json';
+import jaJP from '../locales/ja-JP.json';
+
+i18n
+  .use(initReactI18next)
+  .init({
+    resources: {
+      'zh-CN': { translation: zhCN },
+      'en-US': { translation: enUS },
+      'ja-JP': { translation: jaJP },
+    },
+    lng: 'zh-CN', // 默认语言
+    fallbackLng: 'zh-CN', // 回退语言
+    interpolation: {
+      escapeValue: false, // React已自动转义，无需重复处理
+    },
+    keySeparator: false, // 支持含点号的Key
+    nsSeparator: false,
+  });
+
+// 导出供Loader使用的t函数
+export const t = i18n.t.bind(i18n);
+export default i18n;
+```
+

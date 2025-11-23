@@ -1,0 +1,289 @@
+---
+title: JavaScript面向对象编程全解析：NEW原理、原型链与继承机制
+date: '2021-12-13'
+tags: ['JavaScript']
+draft: false
+summary: 系统梳理JavaScript面向对象编程核心概念，深入剖析NEW关键字实现原理、原型与原型链底层机制，全面覆盖多种继承方式及ES6 class继承特性
+---
+
+## 一、面向对象编程（OOP）核心概述
+### 1. OOP与POP的本质区别
+| 编程范式 | 核心思想 | 特点 |
+|----------|----------|------|
+| **OOP（面向对象）** | 以“对象”为核心，将数据与方法封装为独立单元 | 高复用性、高扩展性、易维护 |
+| **POP（面向过程）** | 以“步骤”为核心，按执行流程拆解为函数 | 逻辑清晰、适合简单场景 |
+
+JavaScript是**基于面向对象设计的语言**，其核心特性是“万物皆对象”，所有数据类型和内置组件均对应特定类的实例。
+
+### 2. 核心概念定义
+- **对象（Object）**：封装数据（属性）与行为（方法）的基本单元，占据独立堆内存空间。
+- **类（Class）**：对象的抽象模板，定义对象的共有属性与方法（JS中类本质是函数）。
+- **实例（Instance）**：类的具体实现，通过`new`关键字创建，继承类的属性与方法。
+
+### 3. JavaScript内置类体系
+所有JS数据类型均对应内置类，实例可调用所属类及其原型链上的方法：
+- 基础类型：`Number`、`String`、`Boolean`、`Null`、`Undefined`
+- 引用类型：`Array`、`RegExp`、`Function`、`Object`、`Date`
+- DOM元素：`HTMLDivElement` → `HTMLElement` → `Element` → `Node` → `EventTarget` → `Object`（原型链继承）
+
+---
+
+## 二、NEW关键字的底层实现原理
+### 1. 普通函数与构造函数执行差异
+函数执行分为两种模式，核心区别在于`new`关键字触发的额外流程：
+
+#### （1）普通函数执行流程
+1. 创建函数执行上下文（EC）并压入ECStack；
+2. 生成活动对象（AO）存储局部变量与参数；
+3. 初始化作用域链；
+4. 绑定`this`指向（非严格模式指向`window`，严格模式为`undefined`）；
+5. 逐行执行代码，无默认返回值（返回`undefined`）。
+
+#### （2）构造函数执行流程（new调用）
+在普通函数执行基础上增加3个核心步骤：
+1. **创建实例对象**：默认生成一个空对象`obj`，作为当前类的实例；
+2. **继承func.prototype**：将新创建的实例`obj`的`__proto__`指向构造函数的`prototype`，实现原型链继承；
+3. **绑定this指向**：将函数内部`this`指向新创建的实例`obj`；
+4. **默认返回实例**：无论是否显式写`return`，均默认返回`obj`（若返回引用类型值，会覆盖默认实例）。
+
+### 2. 手动实现NEW关键字（_new函数）
+```javascript
+function _new(func,...args){
+  let obj = Object.create(null);
+  obj.__proto__ = func.prototype;  // 可以省略为 let obj = Object.create(func.prototype);
+  let result = func.apply(obj, args);
+  return (typeof result === 'object' && result !== null) || typeof result === 'function' 
+        ? result 
+        : obj;
+}
+
+// 测试示例
+function Dog(name) {
+    this.name = name;
+}
+Dog.prototype.bark = function() {
+    console.log('wangwang');
+};
+Dog.prototype.sayName = function() {
+    console.log(`my name is ${this.name}`);
+};
+
+const sanmao = _new(Dog, '三毛');
+sanmao.bark(); // wangwang
+sanmao.sayName(); // my name is 三毛
+console.log(sanmao instanceof Dog); // true（正确继承原型）
+```
+
+### 3. 关键特性说明
+- 每次`new`调用都会创建**新的堆内存对象**，实例间相互独立（`new Func() !== new Func()`）；
+- 仅`this.xxx = xxx`会绑定到实例，函数内部局部变量（非`this`挂载）仅存在于AO中，与实例无关；
+- 显式返回引用类型（对象、函数、数组等）会覆盖默认实例，返回基础类型则不影响。
+
+---
+
+## 三、原型（prototype）与原型链（__proto__）底层机制
+### 1. 核心规则（底层基石）
+1. **类的prototype属性**：每个函数（类）天生具备`prototype`属性，值为原型对象（默认继承`Object.prototype`）；
+2. **原型对象的constructor属性**：原型对象默认包含`constructor`属性，指向所属的类（函数）；
+3. **对象的__proto__属性**：所有对象（实例、原型对象、函数等）均具备`__proto__`属性，值为其所属类的`prototype`（原型链的连接纽带）。
+
+### 2. 原型链的定义与构成
+- **概念**：对象通过`__proto__`逐级关联原型对象，形成的链式结构称为原型链，最终指向`Object.prototype.__proto__ = null`（链的终点）；
+- **作用**：变量/方法查找时，从对象自身开始，沿原型链向上检索，直到找到目标或抵达链尾（返回`undefined`）。
+
+### 3. 经典案例解析（原型链查找流程）
+```javascript
+function Fn() {
+    this.x = 100;
+    this.y = 200;
+    this.getX = function() { console.log(this.x); }; // 实例私有方法
+}
+// 原型上的共有方法
+Fn.prototype.getX = function() { console.log(this.x); };
+Fn.prototype.getY = function() { console.log(this.y); };
+
+const f1 = new Fn();
+const f2 = new Fn();
+
+// 输出结果分析（原型链查找机制）
+console.log(f1.getX === f2.getX); // false（实例私有方法，各自独立）
+console.log(f1.getY === f2.getY); // true（原型上的共有方法，共享引用）
+console.log(f1.__proto__.getY === Fn.prototype.getY); // true（__proto__指向原型）
+console.log(f1.getX === Fn.prototype.getX); // false（实例方法覆盖原型方法）
+f1.__proto__.getX(); // undefined（this指向原型对象，原型上无x属性）
+Fn.prototype.getY(); // undefined（this指向原型对象，原型上无y属性）
+```
+
+### 4. 特殊原型链关系（顶层设计）
+- 所有类（函数）均是`Function`的实例：`Fn.__proto__ === Function.prototype`、`Object.__proto__ === Function.prototype`；
+- `Function`自身也是其实例：`Function.__proto__ === Function.prototype`（顶层设计的自引用）；
+- 所有原型对象最终继承`Object.prototype`：`Fn.prototype.__proto__ === Object.prototype`。
+
+---
+
+## 四、原型的核心价值与应用
+### 1. 原型的核心优势
+1. **内存优化**：原型上的方法被所有实例共享，避免重复创建（对比实例私有方法，节省内存）；
+2. **实现继承**：通过原型链关联，子类实例可访问父类的共有属性与方法；
+3. **动态扩展**：可在运行时为类的原型添加方法，所有实例即时共享。
+
+### 2. 原型的典型应用场景
+#### （1）内置类原型扩展方法
+```javascript
+// 为Array扩展去重方法（所有数组实例可调用）
+Array.prototype.unique = function() {
+    return [...new Set(this)];
+};
+[1, 2, 2, 3].unique(); // [1,2,3]
+```
+
+#### （2）方法借用（原型方法复用）
+```javascript
+// 借用Array.prototype.slice将类数组转为数组
+function toArray-like(obj) {
+    return Array.prototype.slice.call(obj);
+}
+toArray-like(document.querySelectorAll('div')); // 转为数组
+```
+
+#### （3）手动实现Array.prototype.slice
+```javascript
+Array.prototype.slice = function(start = 0, end = this.length) {
+    const newArr = [];
+    // this指向调用slice的数组/类数组对象
+    for (let i = start; i < end && i < this.length; i++) {
+        newArr.push(this[i]);
+    }
+    return newArr;
+};
+```
+
+---
+
+## 五、JavaScript继承方式全解析
+### 1. call继承（构造函数继承）
+#### 实现原理
+通过`call/apply`将父类作为普通函数执行，绑定`this`为子类实例，实现私有属性继承。
+
+```javascript
+function Parent() {
+    this.x = 100; // 父类私有属性
+}
+Parent.prototype.getX = function() { console.log(this.x); }; // 父类共有方法
+
+function Child() {
+    Parent.call(this); // 绑定this为Child实例，继承私有属性
+    this.y = 200; // 子类私有属性
+}
+
+const child = new Child();
+console.log(child.x); // 100（继承父类私有属性）
+child.getX(); // 报错（无法继承父类原型方法）
+```
+
+#### 特点
+- 仅继承父类**私有属性**，无法继承原型上的共有属性/方法；
+- 子类实例与父类原型无关联（`child instanceof Parent === false`）。
+
+### 2. 原型链继承
+#### 实现原理
+将子类原型指向父类实例，使子类实例通过原型链访问父类的私有与共有属性。
+
+```javascript
+function Parent() {
+    this.like = '篮球'; // 父类私有属性
+}
+Parent.prototype.name = '小明'; // 父类共有属性
+
+function Child() {
+    this.age = 10; // 子类私有属性
+}
+
+// 核心：子类原型指向父类实例
+Child.prototype = new Parent();
+// 修复constructor指向（否则指向Parent）
+Child.prototype.constructor = Child;
+
+const child = new Child();
+console.log(child.name); // 小明（继承父类共有属性）
+console.log(child.like); // 篮球（继承父类私有属性）
+console.log(child instanceof Parent); // true
+```
+
+#### 特点
+- 同时继承父类**私有属性**与**共有属性/方法**；
+- 所有子类实例共享父类实例的私有属性（修改一个实例会影响其他实例）。
+
+### 3. 寄生组合继承（最优方案）
+#### 实现原理
+结合`call继承`（继承私有属性）与`Object.create`（继承共有属性），避免原型链继承的缺陷。
+
+```javascript
+function Parent() {
+    this.x = 100; // 父类私有属性
+}
+Parent.prototype.getX = function() { console.log(this.x); }; // 父类共有方法
+
+function Child() {
+    Parent.call(this); // 继承私有属性（call继承）
+    this.y = 200; // 子类私有属性
+}
+
+// 核心：子类原型继承父类原型（无父类实例私有属性）
+Child.prototype = Object.create(Parent.prototype);
+Child.prototype.constructor = Child; // 修复constructor
+Child.prototype.getY = function() { console.log(this.y); }; // 子类共有方法
+
+const child = new Child();
+child.getX(); // 100（继承父类共有方法）
+child.getY(); // 200（子类自有方法）
+console.log(child instanceof Parent); // true
+```
+
+#### 特点
+- 完美继承：私有属性通过`call`继承，共有属性通过原型链继承；
+- 无实例共享问题，内存占用优化，是ES6之前的最优继承方案。
+
+### 4. ES6 class继承（语法糖）
+#### 实现原理
+基于寄生组合继承封装的语法糖，通过`class`定义类，`extends`实现继承，`super`调用父类构造函数。
+
+```javascript
+class Parent {
+    constructor() {
+        this.x = 100; // 父类私有属性
+    }
+    getX() { // 父类共有方法（挂载到prototype）
+        console.log(this.x);
+    }
+    static n = 200; // 父类静态属性（挂载到类本身）
+}
+
+class Child extends Parent {
+    constructor() {
+        super(); // 必须调用，等价于Parent.call(this)
+        this.y = 200; // 子类私有属性
+    }
+    getY() { // 子类共有方法
+        console.log(this.y);
+    }
+}
+
+const child = new Child();
+child.getX(); // 100（继承父类方法）
+console.log(Child.n); // 200（继承父类静态属性）
+```
+
+#### super关键字的核心作用
+1. **作为函数调用**：代表父类构造函数，必须在子类`constructor`中调用，且位于`this`之前；
+2. **作为对象引用**：指向父类原型对象，可访问父类的共有属性/方法（`super.getX()`等价于`Parent.prototype.getX.call(this)`）；
+3. **限制**：仅能在子类构造函数或实例方法中使用，静态方法中使用会报错。
+
+---
+
+## 六、核心总结
+1. **面向对象核心**：以类和实例为基础，通过原型链实现属性/方法的继承与共享；
+2. **NEW原理**：创建实例对象→绑定this→执行构造函数→返回实例（引用类型覆盖）；
+3. **原型链本质**：通过`__proto__`连接对象与原型，构成方法查找的链式路径；
+4. **继承方案选择**：ES6之前优先使用寄生组合继承，ES6推荐`class extends`（语法简洁且无缺陷）；
+5. **性能优化**：利用原型共享方法减少内存占用，避免过度继承导致原型链过长。

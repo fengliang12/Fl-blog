@@ -1,0 +1,378 @@
+---
+title: JavaScript 事件模型：事件绑定、事件对象与事件委托
+date: '2024-12-28'
+tags: ['JavaScript']
+draft: false
+summary: 系统梳理浏览器事件模型核心知识，涵盖事件本质、DOM0/DOM2事件绑定机制、事件对象属性方法、事件传播三阶段、事件委托优化及offset/client/scroll布局属性实战应用
+---
+
+## 一、事件与事件绑定的核心概念
+### 1.1 事件的本质
+> **事件**：浏览器赋予DOM元素的原生行为，当行为触发时，对应的事件会自动发生（与是否绑定处理函数无关）。
+
+- 典型事件场景：
+  - 鼠标操作：`click`（点击）、`mousemove`（鼠标移动）、`mouseup`（鼠标抬起）；
+  - 输入操作：`input`（输入框内容变化）、`change`（输入框内容确认变化）；
+  - 页面生命周期：`DOMContentLoaded`（DOM解析完成）、`load`（所有资源加载完成）。
+- 核心逻辑：JS的作用是在事件发生时注入自定义逻辑，而非触发事件本身。
+
+### 1.2 事件绑定的定义
+> **事件绑定**：为元素的特定事件关联回调函数，使事件触发时执行自定义代码，实现交互逻辑。
+
+- 本质：建立“事件触发”与“代码执行”的关联关系，浏览器负责监听事件，回调函数负责处理逻辑。
+
+---
+
+## 二、事件绑定的两种核心方式
+### 2.1 DOM0 级事件绑定
+#### 语法与特点
+```javascript
+// 基础语法
+元素.on[事件类型] = 回调函数;
+
+// 示例：点击按钮触发逻辑
+const btn = document.querySelector('#btn');
+btn.onclick = function() {
+  console.log('DOM0 事件触发');
+};
+```
+
+- 核心特性：
+  1. 本质是给DOM元素的**私有事件属性**赋值（如`onclick`），触发时JS引擎自动调用该函数；
+  2. 事件类型限制：仅支持浏览器暴露的`onxxx`属性（如`oninput`、`onmouseenter`），部分事件（如`DOMContentLoaded`）不支持；
+  3. 单一绑定限制：同一事件多次赋值会覆盖，仅保留最后一次绑定的函数。
+
+#### 覆盖问题演示
+```javascript
+btn.onclick = function() {
+  console.log('第一次绑定'); // 不会执行
+};
+btn.onclick = function() {
+  console.log('第二次绑定'); // 仅执行此函数
+};
+```
+
+### 2.2 DOM2 级事件绑定
+#### 语法与特点
+```javascript
+// 绑定事件
+元素.addEventListener(事件类型, 回调函数, 捕获模式);
+// 移除事件
+元素.removeEventListener(事件类型, 回调函数, 捕获模式);
+
+// 示例：绑定点击事件（冒泡阶段触发）
+btn.addEventListener('click', handleClick, false);
+```
+
+- 参数说明：
+  - 事件类型：字符串，不带`on`前缀（如`'click'`而非`'onclick'`）；
+  - 回调函数：事件触发时执行的函数；
+  - 捕获模式：`false`（默认，冒泡阶段触发）、`true`（捕获阶段触发）。
+
+- 核心特性：
+  1. 标准绑定方式：方法定义在`EventTarget.prototype`上（所有DOM元素均继承）；
+  2. 事件池机制：支持同一元素、同一事件绑定多个函数，触发时按注册顺序依次执行；
+  3. 可移除性：`removeEventListener`需传入与绑定相同的函数引用（匿名函数无法移除）。
+
+#### 正确移除事件示例
+```javascript
+// 定义具名函数（关键：确保引用一致）
+function handleClick() {
+  console.log('可移除的事件监听');
+}
+
+// 绑定事件
+btn.addEventListener('click', handleClick, false);
+// 移除事件（参数需完全匹配）
+btn.removeEventListener('click', handleClick, false);
+```
+
+### 2.3 DOM0 与 DOM2 共存时的执行顺序
+- 同一事件同时绑定DOM0和DOM2时，**DOM0先执行，DOM2按注册顺序依次执行**（同一传播阶段内）：
+```javascript
+// DOM0 绑定
+btn.onclick = function() {
+  console.log('DOM0 执行');
+};
+
+// DOM2 绑定（两次）
+btn.addEventListener('click', () => console.log('DOM2 - 1'), false);
+btn.addEventListener('click', () => console.log('DOM2 - 2'), false);
+
+// 点击输出顺序：DOM0 执行 → DOM2 - 1 → DOM2 - 2
+```
+
+---
+
+## 三、事件对象：事件的完整快照
+### 3.1 事件对象的本质
+事件触发时，浏览器自动创建的**事件信息容器**，作为第一个参数传入回调函数，包含本次事件的所有细节。
+
+```javascript
+btn.onclick = function(ev) {
+  console.log(ev); // MouseEvent 对象（鼠标事件示例）
+};
+```
+
+- 核心特性：
+  1. 唯一性：每次事件触发生成新的事件对象；
+  2. 共享性：同一次事件传播（捕获→目标→冒泡）中，所有回调函数拿到的是同一个事件对象引用。
+
+#### 共享性验证
+```javascript
+let eventRef = null;
+
+// 目标元素绑定事件
+btn.addEventListener('click', (ev) => {
+  eventRef = ev;
+});
+
+// 父元素绑定事件（冒泡阶段）
+document.body.addEventListener('click', (ev) => {
+  console.log(ev === eventRef); // true（同一事件对象）
+});
+```
+
+### 3.2 事件对象的类型体系
+事件对象按场景分类，原型链继承自`Event`基类：
+- 鼠标事件：`MouseEvent`（`click`/`mousemove`等）；
+- 键盘事件：`KeyboardEvent`（`keydown`/`keyup`等）；
+- 触摸事件：`TouchEvent`（`touchstart`/`touchmove`等）；
+- 基础事件：`Event`（`DOMContentLoaded`/`load`等）。
+
+原型链结构示例：
+```
+MouseEvent.prototype → UIEvent.prototype → Event.prototype → Object.prototype
+```
+
+### 3.3 常用属性与方法（实战必备）
+以`MouseEvent`为例，核心属性与方法如下：
+```javascript
+btn.onclick = function(ev) {
+  // 1. 坐标信息
+  ev.clientX / ev.clientY; // 相对视口左上角坐标（不含滚动）
+  ev.pageX / ev.pageY;     // 相对文档左上角坐标（含滚动）
+
+  // 2. 事件基础信息
+  ev.type;         // 事件类型（如 'click'）
+  ev.target;       // 事件源（真实触发事件的元素，标准属性）
+  ev.srcElement;   // 事件源（IE兼容属性）
+
+  // 3. 事件控制方法
+  ev.preventDefault();    // 阻止默认行为（如链接跳转、表单提交）
+  ev.stopPropagation();   // 阻止事件冒泡（或捕获）
+  ev.stopImmediatePropagation(); // 阻止后续同事件回调执行
+};
+```
+
+- 兼容说明：旧版IE中，`preventDefault()`对应`ev.returnValue = false`，`stopPropagation()`对应`ev.cancelBubble = true`。
+
+---
+
+## 四、事件传播：捕获→目标→冒泡三阶段
+DOM标准定义事件传播的完整流程，分为三个有序阶段：
+
+### 4.1 三阶段核心逻辑
+| 阶段         | 传播方向       | 核心作用                     | 触发时机                     |
+|--------------|----------------|------------------------------|------------------------------|
+| 捕获阶段     | 外向内（window→目标元素） | 确定事件传播路径             | DOM2绑定且`useCapture: true` |
+| 目标阶段     | 目标元素本身   | 事件到达真实触发元素         | 所有绑定方式均触发           |
+| 冒泡阶段     | 内向内（目标元素→window） | 事件向外层元素扩散           | DOM0绑定/ DOM2绑定`useCapture: false` |
+
+#### 传播流程可视化
+```
+window → document → html → body → 父元素 → 目标元素（捕获阶段）
+                          ↓
+目标元素（目标阶段）
+                          ↓
+父元素 → body → html → document → window（冒泡阶段）
+```
+
+### 4.2 不同绑定方式的阶段触发规则
+- DOM0 绑定：仅在**目标阶段**和**冒泡阶段**触发；
+- DOM2 绑定：
+  - `useCapture: true`：仅在**捕获阶段**触发；
+  - `useCapture: false`：仅在**目标阶段**和**冒泡阶段**触发。
+
+#### 阶段触发示例
+```html
+<div class="outer">
+  <div class="inner"></div>
+</div>
+```
+
+```javascript
+const outer = document.querySelector('.outer');
+const inner = document.querySelector('.inner');
+
+// outer 捕获阶段绑定
+outer.addEventListener('click', () => console.log('outer 捕获'), true);
+// outer 冒泡阶段绑定
+outer.addEventListener('click', () => console.log('outer 冒泡'), false);
+// inner 目标阶段绑定（DOM0）
+inner.onclick = () => console.log('inner 目标');
+
+// 点击 inner 的输出顺序：
+// outer 捕获（捕获阶段）→ inner 目标（目标阶段）→ outer 冒泡（冒泡阶段）
+```
+
+---
+
+## 五、事件委托：高性能事件绑定方案
+### 5.1 核心思想与优势
+> **事件委托**：利用事件冒泡机制，将子元素的事件处理逻辑委托给父元素（或祖先元素）统一处理。
+
+- 解决场景：列表项、动态新增元素等需要批量绑定事件的场景；
+- 核心优势：
+  1. 减少绑定次数：从“N个子元素绑定”变为“1个父元素绑定”，提升性能；
+  2. 动态适配：新增子元素无需重新绑定事件，天然支持；
+  3. 统一管理：事件逻辑集中在父元素，便于维护。
+
+### 5.2 基础实现方案
+以“点击列表项高亮”为例：
+```html
+<ul id="list">
+  <li>列表项1</li>
+  <li>列表项2</li>
+  <li>列表项3</li>
+</ul>
+```
+
+```javascript
+const list = document.querySelector('#list');
+
+// 父元素绑定事件，委托处理子元素逻辑
+list.onclick = function(ev) {
+  // 1. 兼容获取事件源
+  const target = ev.target || ev.srcElement;
+  // 2. 验证目标元素（仅处理 li 元素）
+  if (target.nodeName.toLowerCase() === 'li') {
+    // 3. 执行子元素逻辑
+    target.style.backgroundColor = 'red';
+  }
+};
+```
+
+### 5.3 通用事件委托函数（可复用）
+```javascript
+/**
+ * 通用事件委托函数
+ * @param {Element} parent - 委托的父元素
+ * @param {string} type - 事件类型（如 'click'）
+ * @param {string} selector - 目标子元素选择器（如 'li'、'.item'）
+ * @param {Function} handler - 事件处理函数（this 指向目标子元素）
+ */
+function delegate(parent, type, selector, handler) {
+  // 绑定父元素事件
+  parent.addEventListener(type, function(ev) {
+    const target = ev.target;
+    // 验证目标元素是否匹配选择器（兼容处理）
+    const matches = target.matches 
+      ? target.matches(selector) 
+      : target.msMatchesSelector(selector); // IE兼容
+    
+    if (matches) {
+      // 调整 this 指向目标元素，传递事件对象
+      handler.call(target, ev);
+    }
+  });
+}
+
+// 使用示例
+delegate(list, 'click', 'li', function(ev) {
+  this.style.backgroundColor = 'red'; // this 指向被点击的 li
+});
+```
+
+---
+
+## 六、实战场景：拖拽功能实现（事件绑定最佳实践）
+### 6.1 核心问题：鼠标焦点丢失
+拖拽时鼠标移动过快，光标超出元素范围会导致：
+- `mousemove`事件中断，拖拽异常；
+- `mouseup`事件未触发，拖拽状态无法解除。
+
+### 6.2 解决方案：事件委托到 document
+- 策略：`mousedown`绑定目标元素（启动拖拽），`mousemove`/`mouseup`绑定`document`（全局捕获）；
+- 优势：无论鼠标移动到何处，均能捕获事件，避免焦点丢失。
+
+### 6.3 完整实现代码
+```javascript
+const box = document.querySelector('#drag-box');
+
+// 绑定鼠标按下事件（启动拖拽）
+box.addEventListener('mousedown', handleDown);
+
+function handleDown(ev) {
+  // 禁止右键/中键拖拽
+  if (ev.which === 2 || ev.which === 3) return;
+
+  // 记录初始状态（元素位置、鼠标坐标）
+  const startState = {
+    clientX: ev.clientX,
+    clientY: ev.clientY,
+    offsetLeft: this.offsetLeft,
+    offsetTop: this.offsetTop
+  };
+
+  // 绑定鼠标移动/抬起事件（委托到 document）
+  const handleMove = function(ev) {
+    // 计算新位置
+    const newLeft = ev.clientX - startState.clientX + startState.offsetLeft;
+    const newTop = ev.clientY - startState.clientY + startState.offsetTop;
+    // 更新元素位置
+    box.style.left = `${newLeft}px`;
+    box.style.top = `${newTop}px`;
+  };
+
+  const handleUp = function() {
+    // 解除事件绑定，结束拖拽
+    document.removeEventListener('mousemove', handleMove);
+    document.removeEventListener('mouseup', handleUp);
+  };
+
+  document.addEventListener('mousemove', handleMove);
+  document.addEventListener('mouseup', handleUp);
+}
+```
+
+---
+
+## 七、布局属性：offset/client/scroll 全面解析
+这类属性属于DOM元素的原生属性，用于获取元素尺寸与位置，常与事件结合实现布局计算。
+
+### 7.1 宽高属性对比（核心差异）
+| 属性           | 包含范围                  | 核心用途                  | 特点                     |
+|----------------|---------------------------|---------------------------|--------------------------|
+| scrollWidth    | 内容实际宽度（不含border） | 获取元素真实内容宽度      | 内容溢出时大于clientWidth |
+| scrollHeight   | 内容实际高度（不含border） | 获取元素真实内容高度      | 同上                     |
+| clientWidth    | 可视区域宽度（padding+content） | 获取元素可视内容宽度    | 不含border和滚动条       |
+| clientHeight   | 可视区域高度（padding+content） | 获取元素可视内容高度    | 同上                     |
+| offsetWidth    | 元素整体宽度（border+padding+content+滚动条） | 获取元素实际渲染宽度 | 只读整数，包含所有可见部分 |
+
+### 7.2 位置属性：offsetTop/offsetLeft
+- 定义：元素相对于**最近的定位祖先元素**（position非static）的偏移量；
+- 应用场景：计算元素在页面中的相对位置，配合拖拽、滚动等功能。
+
+### 7.3 style.width 与 offsetWidth 的区别
+| 特性           | style.width                | offsetWidth               |
+|----------------|----------------------------|---------------------------|
+| 读写性         | 可读写                     | 只读                      |
+| 取值格式       | 字符串（带单位，如'100px'） | 数字（不带单位，如100）   |
+| 包含范围       | 仅内容区宽度               | border+padding+content+滚动条 |
+| 生效条件       | 需设置行内样式或JS赋值     | 直接获取渲染后实际宽度    |
+
+---
+
+## 八、核心知识总结与实战建议
+### 8.1 核心知识点梳理
+1. **事件绑定**：DOM0适合简单场景（单一绑定），DOM2适合复杂场景（多绑定、可移除）；
+2. **事件对象**：掌握坐标、事件源、阻止默认行为/冒泡等核心属性方法；
+3. **事件传播**：理解捕获→目标→冒泡三阶段，明确不同绑定方式的触发时机；
+4. **事件委托**：利用冒泡机制优化批量绑定，适配动态元素；
+5. **布局属性**：区分scroll/client/offset系列属性的适用场景。
+
+### 8.2 实战复习建议
+推荐实现综合Demo，覆盖核心知识点：
+- 功能：列表项点击高亮（事件委托）+ 列表项动态添加（委托优势）+ 元素拖拽（事件绑定与布局属性）；
+- 目标：熟练运用事件绑定、事件对象、布局属性等知识，理解事件传播机制。

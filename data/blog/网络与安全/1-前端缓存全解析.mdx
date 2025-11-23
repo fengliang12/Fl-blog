@@ -1,0 +1,501 @@
+---
+title: 前端缓存全解析：HTTP缓存、本地存储与离线应用
+date: '2023-11-20'
+tags: ['网络与安全', '前端缓存']
+draft: false
+summary: 全面讲解前端缓存技术体系，包括HTTP协议缓存、浏览器本地存储和离线应用缓存，附完整代码示例和最佳实践
+---
+
+# 前端缓存全解析：从HTTP到离线应用
+
+缓存是前端性能优化的核心手段，合理利用缓存可以大幅减少网络请求、提升页面加载速度和用户体验。本文系统梳理前端常用的缓存技术，从HTTP协议层缓存到浏览器本地存储，再到离线应用缓存，涵盖原理、实现和最佳实践。
+
+## 一、HTTP协议层缓存（网络资源缓存）
+
+HTTP缓存是浏览器与服务器之间的缓存机制，通过HTTP头部字段控制，分为**强缓存**和**协商缓存**两个层级。
+
+### 1. 强缓存
+
+#### 原理
+服务器通过响应头设置缓存有效期，浏览器在有效期内直接使用本地缓存，不发起任何HTTP请求。
+
+#### 核心字段
+- **Cache-Control**（HTTP/1.1，优先级更高）：
+  - `max-age`：缓存有效期（相对时间，单位秒）
+  - `public`：允许中间代理服务器缓存
+  - `private`：仅客户端浏览器缓存
+  - `no-cache`：跳过强缓存，直接走协商缓存
+  - `no-store`：不缓存任何内容
+
+- **Expires**（HTTP/1.0）：
+  - 绝对时间（如`Expires: Thu, 20 Nov 2025 08:00:00 GMT`）
+  - 依赖客户端时间，可能因时间不一致导致失效
+
+#### 服务端配置示例（Node.js/Express）
+```javascript
+const express = require('express');
+const app = express();
+const path = require('path');
+
+// 静态资源强缓存配置
+app.use('/static', express.static(path.join(__dirname, 'static'), {
+  setHeaders: (res, path) => {
+    if (path.endsWith('.css') || path.endsWith('.js')) {
+      // 缓存1小时
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      // 兼容HTTP/1.0
+      res.setHeader('Expires', new Date(Date.now() + 3600 * 1000).toUTCString());
+    }
+  }
+}));
+
+app.listen(3000, () => console.log('Server running on port 3000'));
+```
+
+#### 浏览器行为
+- 首次请求：返回`200 OK`，同时缓存资源
+- 有效期内请求：返回`200 OK (from disk cache/memory cache)`
+- 不发起网络请求，直接使用本地缓存
+
+### 2. 协商缓存
+
+#### 原理
+强缓存失效后，浏览器携带缓存标识请求服务器，服务器对比标识判断资源是否更新：
+- 未更新：返回`304 Not Modified`，浏览器使用本地缓存
+- 已更新：返回`200 OK`，携带新资源和新标识
+
+#### 核心字段
+
+##### Last-Modified/If-Modified-Since
+- 基于文件最后修改时间的缓存机制
+- 服务器返回`Last-Modified`响应头
+- 浏览器下次请求携带`If-Modified-Since`请求头
+- **缺陷**：只能精确到秒，内容未变但修改时间变化也会重新请求
+
+##### ETag/If-None-Match
+- 基于文件内容哈希（MD5/SHA）的缓存机制
+- 服务器返回`ETag`响应头
+- 浏览器下次请求携带`If-None-Match`请求头
+- **优势**：精准识别内容变化，优先级高于Last-Modified
+
+#### 服务端配置示例（Node.js/Express）
+```javascript
+const crypto = require('crypto');
+const fs = require('fs');
+
+app.get('/api/data', (req, res) => {
+  const filePath = path.join(__dirname, 'data.json');
+  const fileContent = fs.readFileSync(filePath, 'utf8');
+  
+  // 生成ETag（文件内容哈希）
+  const etag = crypto.createHash('md5').update(fileContent).digest('hex');
+  // 获取文件最后修改时间
+  const stats = fs.statSync(filePath);
+  const lastModified = stats.mtime.toUTCString();
+
+  // 对比If-None-Match（ETag）
+  if (req.headers['if-none-match'] === etag) {
+    return res.status(304).end();
+  }
+  
+  // 对比If-Modified-Since（Last-Modified）
+  if (req.headers['if-modified-since'] === lastModified) {
+    return res.status(304).end();
+  }
+
+  // 设置响应头
+  res.setHeader('ETag', etag);
+  res.setHeader('Last-Modified', lastModified);
+  res.setHeader('Cache-Control', 'no-cache'); // 跳过强缓存
+  res.json(JSON.parse(fileContent));
+});
+```
+
+#### 浏览器行为
+- 请求头携带缓存标识（`If-Modified-Since`/`If-None-Match`）
+- 服务器验证后返回`304`或`200`
+- 减少带宽消耗，但仍需发起HTTP请求
+
+## 二、浏览器本地存储缓存（业务数据存储）
+
+用于存储前端业务数据，遵循同源策略，不同存储方案有不同的特性和适用场景。
+
+### 1. Cookie
+
+#### 特性
+- 容量限制：≤4KB
+- 存储格式：键值对（字符串）
+- 自动携带：符合条件时随每个HTTP请求发送到服务器
+- 过期策略：可设置`expires`/`max-age`，默认会话级
+
+#### 操作示例
+```javascript
+// 设置Cookie（含过期时间、路径、域名、Secure、HttpOnly）
+const setCookie = (name, value, options = {}) => {
+  let cookieStr = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
+  
+  if (options.days) {
+    const d = new Date();
+    d.setTime(d.getTime() + options.days * 24 * 60 * 60 * 1000);
+    cookieStr += `; expires=${d.toUTCString()}`;
+  }
+  
+  if (options.path) cookieStr += `; path=${options.path}`;
+  if (options.domain) cookieStr += `; domain=${options.domain}`;
+  if (options.secure) cookieStr += `; secure`; // 仅HTTPS传输
+  if (options.httpOnly) cookieStr += `; HttpOnly`; // 禁止JS读取
+  
+  // 设置Cookie
+  document.cookie = cookieStr;
+};
+
+// 读取Cookie
+const getCookie = (name) => {
+  const cookies = document.cookie.split('; ');
+  for (const cookie of cookies) {
+    const [key, val] = cookie.split('=');
+    if (decodeURIComponent(key) === name) {
+      return decodeURIComponent(val);
+    }
+  }
+  return null;
+};
+
+// 删除Cookie
+const deleteCookie = (name, options = {}) => {
+  setCookie(name, '', { ...options, days: -1 });
+};
+
+// 使用示例
+setCookie('userId', '12345', { 
+  days: 7, 
+  path: '/', 
+  domain: '.example.com', 
+  secure: true 
+});
+
+console.log(getCookie('userId')); // 12345
+deleteCookie('userId', { path: '/', domain: '.example.com' });
+```
+
+### 2. Web Storage
+
+#### localStorage
+- 容量限制：约5MB
+- 持久化：永久存储（除非手动删除）
+- 同源策略：仅当前协议+域名+端口可访问
+- 存储格式：键值对（仅字符串）
+
+#### sessionStorage
+- 容量限制：约5MB
+- 会话级：关闭标签页即失效
+- 不共享：不同标签页间不共享数据
+
+#### 操作示例
+```javascript
+// localStorage操作
+const user = { id: 1, name: '张三', roles: ['admin'] };
+
+// 存储复杂数据（需JSON序列化）
+localStorage.setItem('user', JSON.stringify(user));
+
+// 读取数据
+const storedUser = JSON.parse(localStorage.getItem('user'));
+console.log(storedUser.name); // 张三
+
+// 遍历所有数据
+for (let i = 0; i < localStorage.length; i++) {
+  const key = localStorage.key(i);
+  console.log(`${key}: ${localStorage.getItem(key)}`);
+}
+
+// 删除数据
+localStorage.removeItem('user');
+localStorage.clear(); // 清空所有
+
+// sessionStorage操作（API相同）
+sessionStorage.setItem('token', 'abc789');
+console.log(sessionStorage.getItem('token')); // abc789
+```
+
+### 3. IndexedDB
+
+#### 特性
+- 容量限制：无明确上限（受硬盘空间限制）
+- 异步操作：不阻塞主线程
+- 支持事务、索引、游标查询
+- 存储结构化数据（对象、数组等）
+
+#### 完整操作示例
+```javascript
+// 1. 打开/创建数据库
+const openDB = async (dbName, version, upgradeCallback) => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(dbName, version);
+    
+    // 数据库升级（首次创建或版本更新时触发）
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (upgradeCallback) upgradeCallback(db, event.oldVersion, event.newVersion);
+    };
+    
+    request.onsuccess = (event) => resolve(event.target.result);
+    request.onerror = (event) => reject(event.target.error);
+    request.onblocked = () => console.log('数据库被占用，无法升级');
+  });
+};
+
+// 2. 初始化数据库
+const initDB = async () => {
+  return openDB('MyAppDB', 1, (db) => {
+    // 创建对象仓库（表）：Users，主键id自增
+    if (!db.objectStoreNames.contains('Users')) {
+      const userStore = db.createObjectStore('Users', { 
+        keyPath: 'id', 
+        autoIncrement: true 
+      });
+      
+      // 创建索引
+      userStore.createIndex('idx_name', 'name', { unique: true });
+      userStore.createIndex('idx_age', 'age', { unique: false });
+    }
+  });
+};
+
+// 3. 添加数据
+const addUser = async (user) => {
+  const db = await initDB();
+  const tx = db.transaction('Users', 'readwrite');
+  const store = tx.objectStore('Users');
+  
+  try {
+    const id = await store.add(user);
+    await tx.complete;
+    return id;
+  } catch (err) {
+    throw new Error(`添加失败：${err.message}`);
+  }
+};
+
+// 4. 查询数据
+const getUserById = async (id) => {
+  const db = await initDB();
+  const tx = db.transaction('Users', 'readonly');
+  const store = tx.objectStore('Users');
+  return store.get(id);
+};
+
+const getUserByName = async (name) => {
+  const db = await initDB();
+  const tx = db.transaction('Users', 'readonly');
+  const store = tx.objectStore('Users');
+  const index = store.index('idx_name');
+  return index.get(name);
+};
+
+// 5. 游标查询（范围查询）
+const getUsersByAgeRange = async (minAge, maxAge) => {
+  const db = await initDB();
+  const tx = db.transaction('Users', 'readonly');
+  const store = tx.objectStore('Users');
+  const index = store.index('idx_age');
+  const range = IDBKeyRange.bound(minAge, maxAge);
+  const users = [];
+  
+  return new Promise((resolve) => {
+    const cursorRequest = index.openCursor(range);
+    cursorRequest.onsuccess = (event) => {
+      const cursor = event.target.result;
+      if (cursor) {
+        users.push(cursor.value);
+        cursor.continue();
+      } else {
+        resolve(users);
+      }
+    };
+  });
+};
+
+// 使用示例
+(async () => {
+  // 添加用户
+  const userId = await addUser({ 
+    name: '张三', 
+    age: 25, 
+    email: 'zhangsan@example.com' 
+  });
+  
+  // 查询用户
+  const user = await getUserByName('张三');
+  console.log('用户信息：', user);
+  
+  // 年龄范围查询
+  const users = await getUsersByAgeRange(20, 30);
+  console.log('年龄20-30的用户：', users);
+})();
+```
+
+## 三、离线应用缓存（Service Worker + Cache API）
+
+Service Worker是运行在浏览器后台的独立脚本，可拦截网络请求、缓存资源、实现离线访问，是PWA的核心技术。
+
+### 核心特性
+- 独立于页面：页面关闭后仍可运行
+- HTTPS要求：生产环境需HTTPS（localhost除外）
+- 事件驱动：通过监听事件实现功能
+- 缓存API：配合Cache对象管理缓存资源
+
+### 完整实现示例
+
+#### 1. 注册Service Worker（页面脚本）
+```javascript
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', async () => {
+    try {
+      // 注册Service Worker
+      const registration = await navigator.serviceWorker.register('/sw.js', { 
+        scope: '/' 
+      });
+      
+      // 监听更新
+      registration.addEventListener('updatefound', () => {
+        const newSW = registration.installing;
+        newSW.addEventListener('statechange', () => {
+          if (newSW.state === 'installed') {
+            console.log('新Service Worker已安装，请刷新页面');
+          }
+        });
+      });
+
+      console.log('Service Worker注册成功');
+    } catch (err) {
+      console.error('Service Worker注册失败：', err);
+    }
+  });
+}
+```
+
+#### 2. Service Worker逻辑（sw.js）
+```javascript
+// 缓存名称和版本
+const CACHE_NAME = 'my-app-cache-v2';
+// 需要缓存的核心资源
+const CORE_ASSETS = [
+  '/',
+  '/index.html',
+  '/css/style.css',
+  '/js/app.js',
+  '/images/logo.png',
+  '/api/data.json'
+];
+
+// 1. 安装阶段：缓存核心资源
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        console.log('缓存核心资源');
+        return cache.addAll(CORE_ASSETS);
+      })
+      .then(() => self.skipWaiting()) // 立即激活
+  );
+});
+
+// 2. 激活阶段：清理旧缓存
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.filter(name => name !== CACHE_NAME)
+          .map(name => caches.delete(name)) // 删除旧缓存
+      );
+    }).then(() => self.clients.claim()) // 接管所有客户端
+  );
+});
+
+// 3. 拦截网络请求：实现缓存策略
+self.addEventListener('fetch', (event) => {
+  // API请求：Network First策略
+  if (event.request.url.includes('/api/')) {
+    event.respondWith(
+      fetch(event.request)
+        .then(networkRes => {
+          // 更新缓存
+          caches.open(CACHE_NAME).then(cache => {
+            cache.put(event.request, networkRes.clone());
+          });
+          return networkRes;
+        })
+        .catch(() => caches.match(event.request)) // 网络失败时使用缓存
+    );
+  } 
+  // 静态资源：Cache First策略
+  else {
+    event.respondWith(
+      caches.match(event.request)
+        .then(cachedRes => {
+          // 缓存优先，无缓存则请求网络
+          return cachedRes || fetch(event.request).then(networkRes => {
+            // 缓存新资源
+            caches.open(CACHE_NAME).then(cache => {
+              cache.put(event.request, networkRes.clone());
+            });
+            return networkRes;
+          });
+        })
+    );
+  }
+});
+
+// 4. 后台同步：离线数据同步
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-data') {
+    event.waitUntil(syncOfflineData());
+  }
+});
+
+// 同步离线数据到服务器
+const syncOfflineData = async () => {
+  // 从IndexedDB读取离线数据并同步
+  // ...实现逻辑
+};
+```
+
+## 四、缓存策略对比与选型建议
+
+| 缓存类型 | 存储位置 | 容量限制 | 核心特性 | 典型应用场景 |
+|---------|---------|---------|---------|------------|
+| **HTTP强缓存** | 浏览器缓存区 | 无 | 无请求，速度快 | 静态资源（CSS/JS/图片） |
+| **HTTP协商缓存** | 浏览器缓存区 | 无 | 资源更新可控 | 动态API数据 |
+| **Cookie** | 浏览器 | ≤4KB | 自动携带，有过期时间 | 用户认证、会话管理 |
+| **localStorage** | 硬盘 | ~5MB | 持久化，易用 | 用户偏好设置、表单草稿 |
+| **sessionStorage** | 内存 | ~5MB | 会话级，隔离性好 | 临时表单数据、页面状态 |
+| **IndexedDB** | 硬盘 | 无上限 | 大容量，支持事务 | 离线数据库、复杂数据存储 |
+| **Service Worker** | 浏览器缓存区 | 无 | 离线能力强，可编程 | PWA应用、离线访问 |
+
+### 最佳实践
+
+1. **静态资源优化**
+   - 使用强缓存（`Cache-Control: max-age=31536000`）
+   - 结合文件指纹（如`app.v2.js`）实现缓存更新
+   - 关键资源使用`preload`预加载
+
+2. **API数据缓存**
+   - 使用协商缓存（ETag）减少带宽消耗
+   - 高频数据结合Service Worker缓存
+   - 实现数据过期策略
+
+3. **离线应用架构**
+   - Service Worker缓存核心HTML/CSS/JS
+   - IndexedDB存储业务数据
+   - 实现后台同步机制
+
+4. **安全性考虑**
+   - 敏感数据使用`HttpOnly` Cookie
+   - localStorage避免存储敏感信息（防止XSS）
+   - 使用HTTPS确保传输安全
+
+5. **缓存更新策略**
+   - 文件内容哈希作为版本号
+   - Service Worker版本控制
+   - 实现优雅的缓存失效机制

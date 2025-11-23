@@ -1,0 +1,333 @@
+---
+title: 作用域、作用域链与闭包核心原理（含ECStack/EC/AO/VO全链路）
+date: '2021-12-06'
+tags: ['JavaScript']
+draft: false
+summary: 系统总结作用域、作用域链、闭包的底层逻辑，结合ECStack/EC/AO/VO执行流程，附带bind实现、单例模式等实战场景
+---
+
+## 一、核心概念定义
+| 概念                | 英文全称                  | 核心含义                                                                 |
+|---------------------|---------------------------|--------------------------------------------------------------------------|
+| 作用域              | Scope                     | 函数创建时确定的独立代码区域，用于隔离变量，避免同名变量冲突。             |
+| 作用域链            | Scope Chain               | 由变量对象（VO/AO）组成的链表，规定变量查找顺序（从当前上下文到外层上下文）。 |
+| 执行环境栈          | Execution Context Stack   | 简称ECStack，遵循“先进后出”原则，管理所有执行上下文（EC）的生命周期。     |
+| 执行上下文          | Execution Context         | 简称EC，代码执行的环境容器，包含VO/AO、作用域链、this绑定三大核心。       |
+| 变量对象            | Variable Object           | 简称VO，全局/全局函数的变量存储容器，对应全局对象（GO）。                 |
+| 活动对象            | Active Object             | 简称AO，函数执行时的变量对象（VO分支），存储参数、arguments、局部变量/函数。 |
+| 闭包                | Closure                   | 内部函数被外部引用，且持有外部函数AO变量，导致外部EC无法出栈回收的现象。   |
+
+---
+
+## 二、函数创建与执行的底层流程
+### 1. 函数创建阶段（静态确定作用域）
+函数创建时，JS引擎完成两件核心操作：
+1. 在堆内存中开辟空间，存储函数代码字符串及相关属性（键值对形式）；
+2. 初始化函数的内置属性 `[[scope]]`，值为当前所在执行上下文的变量对象（VO/AO），**永久绑定创建时的环境**，与执行位置无关。
+
+### 2. 函数执行阶段（动态构建执行环境）
+函数调用时，依次执行以下步骤：
+1. 创建新的执行上下文（EC），压入ECStack栈顶；
+2. 初始化this指向（按调用方式分5种情况：普通调用、对象方法、new、call/apply/bind、箭头函数）；
+3. 创建活动对象（AO），作为当前EC的变量存储容器；
+4. 初始化作用域链（`[[scopeChain]]`）：将当前AO压入链的栈顶，后续拼接函数`[[scope]]`指向的外层变量对象；
+5. 初始化AO内容：先处理arguments对象，再赋值形参，最后解析局部变量/函数声明；
+6. 逐行执行函数代码，变量查找时沿作用域链从顶至底检索。
+
+---
+
+
+
+## 三、作用域链与闭包的核心逻辑
+### 1. 作用域链的本质与作用
+- **结构**：由当前EC的AO + 外层EC的VO/AO组成的链表（如函数B的作用域链 = AO(B) → AO(A) → VO(G)）；
+- **核心作用**：变量查找的唯一路径，确保代码只能访问作用域链上存在的变量，实现变量隔离与权限控制。
+
+### 2. 闭包的形成与特性
+#### （1）形成条件（缺一不可）
+1. 函数嵌套：内部函数引用外部函数的AO变量；
+2. 外部引用：内部函数被外部变量（非外部函数内部）持有；
+3. 外部函数执行完毕：内部函数仍未被销毁，导致外部函数EC无法出栈。
+
+#### （2）底层原理
+外部函数执行后，其EC本应出栈并被垃圾回收，但因内部函数的`[[scope]]`仍引用该EC的AO，导致EC被保留在栈底，AO变量永久可访问，形成闭包。
+
+#### （3）闭包的核心价值
+- **保护**：外部函数的AO变量私有化，仅能通过内部函数访问，避免全局变量污染；
+- **保存**：AO变量不会被垃圾回收机制回收，可长期保留状态，供后续调用复用。
+
+---
+
+## 四、实战案例：代码执行全链路演示
+以经典嵌套函数为例，拆解ECStack、作用域链与闭包的形成过程：
+```javascript
+let x = 1;
+function A(y) {
+    let x = 2;
+    function B(z) {
+        console.log(x + y + z); // 输出 2+2+3=7
+    }
+    return B;
+}
+let C = A(2);
+C(3);
+```
+
+### 执行流程拆解
+1. **全局初始化**：
+   - ECStack压入全局执行上下文EC(G)，VO(G)中存储`x=1`、`A=函数对象`；
+   - 函数A创建时，`A[[scope]] = VO(G)`。
+
+2. **执行A(2)**：
+   - 创建EC(A)压入ECStack，this指向window；
+   - 构建AO(A)：`arguments=[2]`、`y=2`、`x=2`、`B=函数对象`；
+   - 函数B创建时，`B[[scope]] = AO(A)`；
+   - 作用域链：AO(A) → VO(G)；
+   - 返回B给全局变量C，EC(A)本应出栈，但因C引用B，EC(A)被保留（闭包形成）。
+
+3. **执行C(3)（即B(3)）**：
+   - 创建EC(B)压入ECStack，this指向window；
+   - 构建AO(B)：`arguments=[3]`、`z=3`；
+   - 作用域链：AO(B) → AO(A) → VO(G)；
+   - 查找x（AO(A)中x=2）、y（AO(A)中y=2）、z（AO(B)中z=3），计算输出7。
+
+### 堆栈内存源码
+
+```javascript
+let x = 1;
+function A(y){
+    let x = 2;
+    function B(z){
+        console.log(x+y+z)
+    }
+    return B;
+}
+let C = A(2);
+C(3)
+
+//第一步 ，创建全局执行上下文 并将其压进ECStack中
+ECStack = [
+   //全局执行上下文 
+   EC(G)={
+       //全局变量对象
+       VO(G)={
+          ...//=>包含全局对象原有的属性
+          x=1;
+          A =function (y) {....}
+          //创建函数的时候就确定了其作用域
+          A[[scope]] = VO(G) 
+      }
+  }
+}
+//第二步 ，执行函数A(2) 将EC(A)压入栈
+ECStack = [
+   //A的执行上下文
+   //[[scope]]:VO(G)
+  EC(A)={
+       [[scopeChain]]:<AO(A),A[[scope]]>
+       AO={ 
+          y = 2
+          x = 2;
+          B = function(z){console.log(x+y+z)}
+          B[[scope]] = AO(A)
+          this:window
+       }
+   }
+   //全局执行上下文 
+   EC(G)={
+       全局变量对象
+       VO(G)={
+          ...//=>包含全局对象原有的属性
+          x=1;
+          A =function (y) {....}
+          //创建函数的时候就确定了其作用域
+          A[[scope]] = VO(G) 
+      }
+  }
+}
+```
+
+---
+
+## 五、闭包的实战应用场景
+### 1. 自定义Function.prototype.bind方法
+实现思路：利用闭包保存目标函数、绑定上下文及参数，返回新函数复用状态：
+```javascript
+func.bind(obj,1,2,3)
+
+
+~function(proto){
+   function bind(context=window,...outerArgs){
+      let _this = this;
+      return function(...innerArgs){
+          let args = outerArgs.concat(innerArgs)
+          _this.call(context,...args)
+      }
+   }
+   proto.bind = bind
+}(Function.prototype)
+
+//兼容写法
+~function(proto){
+   function bind(context){
+      context = context || window;
+      var _this = this;
+      var outerArgs = Array.prototype.slice.call(arguments,1)
+      return function(){
+          var innerArgs = [].slice.call(arguments,0)
+          let args = outerArgs.concat(innerArgs)
+          _this.apply(context,args)
+      }
+   }
+   proto.bind = bind;
+}(Function.prototype)
+
+```
+
+### 2. 模块封装（单例设计模式）
+利用闭包保护私有变量，仅暴露指定方法，实现模块化隔离：
+```javascript
+// 天气信息管理模块（单例模式）
+let weatherModule = ~function() {
+    // 私有变量（仅模块内可访问）
+    let _defaultCity = 'beijing';
+    
+    // 私有方法
+    function queryWeather(city) {
+        return `[${city}] 天气晴朗`;
+    }
+    
+    // 暴露公开方法（闭包持有私有变量）
+    return {
+        setCity: function(city) {
+            _defaultCity = city;
+        },
+        getWeather: function() {
+            return queryWeather(_defaultCity);
+        }
+    };
+}();
+
+// 单例模式（确保实例唯一）
+function Singleton(name) {
+    this.name = name;
+}
+Singleton.getInstance = function(name) {
+    if (!this.instance) {
+        this.instance = new Singleton(name);
+    }
+    return this.instance;
+};
+let a = Singleton.getInstance('a');
+let b = Singleton.getInstance('b');
+console.log(a === b); // true（同一实例）
+```
+
+### 3.惰性函数：
+
+```javascript
+//DOM2事件绑定
+//元素.addEventListener()
+//元素.attachEvent()
+
+emit(body,'click',fn);
+//第一次执行费事一些，但是从第二次开始执行emit()时都不需要进行判断浏览器的类型了
+emit(body,'click',fn);
+
+function emit(element,type,fn){
+     if(element.addEventListener){
+         emit = function(element,type,fn){
+              element.addEventListener(type,fn,false)
+         }
+     }else if(element.attachEvent){
+         emit = function(element,type,fn){
+              element.attachEvent('on'+type,fn)
+         }
+     }else{
+         emit = function(element,type,fn){
+              element['on'+type]=fn
+         }
+     }
+     emit(element,type,fn)
+}
+
+```
+
+
+### 5. 函数调用扁平化
+```javascript
+/let fn1 = function(x){
+    return x + 10;
+}
+let fn2 = function(x){
+    return x*10;
+}
+let fn3 = function(x){
+    return x/10;
+}
+//老方法实现方式
+console.log(f3(f1(fn2(fn1(5))))) // => ((5+10)*10+10)/10 =>16
+
+//使用compose函数调用扁平化
+//compose()(5) //=>5
+//compose(fn1)(5) //=>5+10 =15
+//compose(fn1,fn2)(2) //=>fn1(5) =15; fn2(15)*10 = 150;
+//compose(fn1,fn2,fn1,fn3)(5)  //==>16
+
+//我的实现方式
+function compose(){
+    //arguments是个类似数组但不是数组的对象
+    let args =Array.prototype.slice.call(arguments,0);
+    return function(y){
+        if(args.length === 0){
+            return y
+        }
+        args.forEach(item=>{
+            y = item(y)
+        })
+        return y;
+    }
+}
+```
+
+
+### 6.实现函数柯里化
+柯里化：把接受多个参数的函数转变为接受一个单一参数的函数，并且返回接受余下的参数且返回结果的新函数的技术。
+函数柯里化（function  ying）又称部分求值。一个currying的函数首先会接受一些参数，接受了这些参数后，该函数并不会立即求值，而是继续返回另外一个函数，刚才传入的参数在函数形成的闭包里被保存起来。待到函数真正需要求值的时候，之前传入的参数都会被一次性用于求值。
+利用闭包的保存机制，把一些内容事预先存储和处理了。等到后期需要的时候再拿出了用即可。
+比如实现 add(1)(2)(3) =>6
+
+```javascript
+//参数长度固定
+//这个关键也是在bind函数，会一直往args里添加数组，而且每一次curring调用时候的那个函数参数都是上一个bind返回的函数，函数套函数套函数
+function curry(fn){
+  return function inner (...args){  //...args收集剩余参数成数组
+    if(args.length >= fn.length){
+      return fn.apply(this,args)
+    }else{
+      return inner.bind(this,...args)  //..args.解构数组单个值
+    }
+  }
+}
+
+function sum(a, b, c) {
+  return a + b + c;
+}
+
+const curriedSum = curry(sum);
+console.log(curriedSum(1)(2)(3)); // 6
+
+//注意： 这里的fn.length 是 函数的形参的长度
+
+```
+
+### 其他常见场景
+防抖/节流函数、事件委托回调、数据缓存（如计算结果缓存）等，核心均利用闭包的“状态保存”特性。
+
+---
+
+## 六、核心总结
+1. 作用域是静态概念（创建时确定），作用域链是动态结构（执行时构建）；
+2. 闭包的本质是“作用域链的持久化引用”，核心价值是保护与保存；
+3. 函数的`[[scope]]`属性是连接创建环境与执行环境的关键，也是闭包形成的核心纽带；
+4. 实战中需合理使用闭包，避免过度使用导致内存占用过高（需手动解除外部引用释放内存）。

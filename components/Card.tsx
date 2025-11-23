@@ -3,14 +3,10 @@ import Link from './Link'
 
 const Card = ({ title, description, imgSrc, href }) => (
   <div className="md max-w-[544px] p-4 md:w-1/2">
-    <div
-      className={`${
-        imgSrc && 'h-full'
-      } overflow-hidden rounded-md border-2 border-gray-200/60 dark:border-gray-700/60`}
-    >
+    <div className={`${imgSrc && 'h-full'} cartoon-card overflow-hidden`}>
       {imgSrc &&
         (href ? (
-          <Link href={href} aria-label={`Link to ${title}`}>
+          <Link href={href} aria-label={`链接到 ${title}`}>
             <Image
               alt={title}
               src={imgSrc}
@@ -31,7 +27,7 @@ const Card = ({ title, description, imgSrc, href }) => (
       <div className="p-6">
         <h2 className="mb-3 text-2xl leading-8 font-bold tracking-tight">
           {href ? (
-            <Link href={href} aria-label={`Link to ${title}`}>
+            <Link href={href} aria-label={`链接到 ${title}`}>
               {title}
             </Link>
           ) : (
@@ -42,10 +38,10 @@ const Card = ({ title, description, imgSrc, href }) => (
         {href && (
           <Link
             href={href}
-            className="text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 text-base leading-6 font-medium"
-            aria-label={`Link to ${title}`}
+            className="text-primary-500 hover:text-primary-600 text-base leading-6 font-medium"
+            aria-label={`链接到 ${title}`}
           >
-            Learn more &rarr;
+            了解更多 &rarr;
           </Link>
         )}
       </div>

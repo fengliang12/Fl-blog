@@ -34,31 +34,42 @@ function Pagination({ totalPages, currentPage }: PaginationProps) {
 
   return (
     <div className="space-y-2 pt-6 pb-8 md:space-y-5">
-      <nav className="flex justify-between">
+      <nav className="flex items-center justify-between">
         {!prevPage && (
-          <button className="cursor-auto disabled:opacity-50" disabled={!prevPage}>
-            Previous
+          <button
+            className="cartoon-button cursor-auto px-4 py-2 disabled:opacity-50"
+            disabled={!prevPage}
+          >
+            上一页
           </button>
         )}
         {prevPage && (
           <Link
             href={currentPage - 1 === 1 ? `/${basePath}/` : `/${basePath}/page/${currentPage - 1}`}
             rel="prev"
+            className="cartoon-button px-4 py-2"
           >
-            Previous
+            上一页
           </Link>
         )}
-        <span>
-          {currentPage} of {totalPages}
+        <span className="text-gray-600">
+          第 {currentPage} / {totalPages} 页
         </span>
         {!nextPage && (
-          <button className="cursor-auto disabled:opacity-50" disabled={!nextPage}>
-            Next
+          <button
+            className="cartoon-button cursor-auto px-4 py-2 disabled:opacity-50"
+            disabled={!nextPage}
+          >
+            下一页
           </button>
         )}
         {nextPage && (
-          <Link href={`/${basePath}/page/${currentPage + 1}`} rel="next">
-            Next
+          <Link
+            href={`/${basePath}/page/${currentPage + 1}`}
+            rel="next"
+            className="cartoon-button px-4 py-2"
+          >
+            下一页
           </Link>
         )}
       </nav>
@@ -88,39 +99,41 @@ export default function ListLayoutWithTags({
           </h1>
         </div>
         <div className="flex sm:space-x-24">
-          <div className="hidden h-full max-h-screen max-w-[280px] min-w-[280px] flex-wrap overflow-auto rounded-sm bg-gray-50 pt-5 shadow-md sm:flex dark:bg-gray-900/70 dark:shadow-gray-800/40">
-            <div className="px-6 py-4">
-              {pathname.startsWith('/blog') ? (
-                <h3 className="text-primary-500 font-bold uppercase">All Posts</h3>
-              ) : (
-                <Link
-                  href={`/blog`}
-                  className="hover:text-primary-500 dark:hover:text-primary-500 font-bold text-gray-700 uppercase dark:text-gray-300"
-                >
-                  All Posts
-                </Link>
-              )}
-              <ul>
-                {sortedTags.map((t) => {
-                  return (
-                    <li key={t} className="my-3">
-                      {decodeURI(pathname.split('/tags/')[1]) === slug(t) ? (
-                        <h3 className="text-primary-500 inline px-3 py-2 text-sm font-bold uppercase">
-                          {`${t} (${tagCounts[t]})`}
-                        </h3>
-                      ) : (
-                        <Link
-                          href={`/tags/${slug(t)}`}
-                          className="hover:text-primary-500 dark:hover:text-primary-500 px-3 py-2 text-sm font-medium text-gray-500 uppercase dark:text-gray-300"
-                          aria-label={`View posts tagged ${t}`}
-                        >
-                          {`${t} (${tagCounts[t]})`}
-                        </Link>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
+          <div className="hidden h-full max-h-screen max-w-[280px] min-w-[280px] flex-wrap overflow-auto pt-5 sm:flex">
+            <div className="cartoon-card mx-4 w-[248px] p-4">
+              <div className="px-6 py-4">
+                {pathname.startsWith('/blog') ? (
+                  <h3 className="text-primary-500 font-bold uppercase">全部文章</h3>
+                ) : (
+                  <Link
+                    href={`/blog`}
+                    className="hover:text-primary-500 font-bold text-gray-700 uppercase"
+                  >
+                    全部文章
+                  </Link>
+                )}
+                <ul>
+                  {sortedTags.map((t) => {
+                    return (
+                      <li key={t} className="my-3">
+                        {decodeURI(pathname.split('/tags/')[1]) === slug(t) ? (
+                          <h3 className="text-primary-500 inline px-3 py-2 text-sm font-bold uppercase">
+                            {`${t} (${tagCounts[t]})`}
+                          </h3>
+                        ) : (
+                          <Link
+                            href={`/tags/${slug(t)}`}
+                            className="hover:text-primary-500 px-3 py-2 text-sm font-medium text-gray-500 uppercase"
+                            aria-label={`查看标签 ${t} 的文章`}
+                          >
+                            {`${t} (${tagCounts[t]})`}
+                          </Link>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
             </div>
           </div>
           <div>
@@ -129,9 +142,9 @@ export default function ListLayoutWithTags({
                 const { path, date, title, summary, tags } = post
                 return (
                   <li key={path} className="py-5">
-                    <article className="flex flex-col space-y-2 xl:space-y-0">
+                    <article className="cartoon-card flex flex-col space-y-2 p-6 xl:space-y-0">
                       <dl>
-                        <dt className="sr-only">Published on</dt>
+                        <dt className="sr-only">发布于</dt>
                         <dd className="text-base leading-6 font-medium text-gray-500 dark:text-gray-400">
                           <time dateTime={date} suppressHydrationWarning>
                             {formatDate(date, siteMetadata.locale)}

@@ -1,0 +1,311 @@
+---
+title: JavaScript异步编程与前后端通信全解析（Promise+跨域+HTTP）
+date: '2022-01-15'
+tags: ['ES6', 'Promise']
+draft: false
+summary: 系统梳理Promise核心原理、异步编程实战、前后端通信方案及跨域解决方案，包含手写Promise实现、HTTP请求对比与跨域原理深度解析
+---
+
+## 一、Promise核心原理与实战
+### 1.1 Promise本质与核心特性
+- **定义**：ES6内置类，用于管理异步编程（本身同步，仅内部常包含异步操作）；
+- **核心作用**：解决回调地狱，将异步流程以同步链式写法呈现；
+- **核心概念**：
+  - 状态（不可逆）：`pending`（初始）→ `fulfilled`（成功）/`rejected`（失败）；
+  - 结果值：`[[PromiseResult]]` 存储成功结果或失败原因；
+  - Executor函数：`new Promise(executor)` 中立即执行的函数，接收 `resolve`（成功）和 `reject`（失败）两个参数。
+
+### 1.2 核心方法与链式调用
+#### （1）then/catch方法
+```javascript
+// 基础用法
+const p1 = new Promise((resolve, reject) => {
+  setTimeout(() => resolve('成功结果'), 1000);
+});
+
+// then接收成功/失败回调，返回新Promise
+const p2 = p1.then(
+  (result) => { console.log('成功:', result); return 200; },
+  (reason) => { console.log('失败:', reason); return -1; }
+);
+
+// catch捕获失败（等价于then(null, rejectedFn)）
+p2.catch(reason => console.log('异常:', reason));
+```
+
+#### （2）链式调用规则
+- 新Promise状态由上一个`then/catch`的执行结果决定：
+  1. 执行抛出异常 → 新状态为`rejected`；
+  2. 返回新Promise → 继承其最终状态；
+  3. 其他情况 → 新状态为`fulfilled`，返回值作为结果。
+
+### 1.3 常用静态方法
+| 方法 | 作用 | 特点 |
+|------|------|------|
+| `Promise.resolve(value)` | 快速创建成功Promise | value为Promise则直接返回，为thenable对象则跟随其状态 |
+| `Promise.reject(reason)` | 快速创建失败Promise | 状态固定为rejected |
+| `Promise.all(arr)` | 并行执行多个Promise | 全部成功则返回结果数组，一个失败则直接失败 |
+| `Promise.race(arr)` | 多个Promise竞速 | 第一个完成的结果作为最终结果（无论成功失败） |
+
+### 1.4 手写Promise实现（符合Promise A+规范）
+```javascript
+class MyPromise {
+  constructor(executor) {
+    this.status = 'pending'; // 初始状态
+    this.value = undefined; // 结果值
+    this.resolvedArr = []; // 成功回调队列
+    this.rejectedArr = []; // 失败回调队列
+
+    // 状态变更函数（不可逆）
+    const changeStatus = (status, result) => {
+      if (this.status !== 'pending') return;
+      this.status = status;
+      this.value = result;
+      // 执行对应队列中的回调
+      const callbackArr = status === 'fulfilled' ? this.resolvedArr : this.rejectedArr;
+      callbackArr.forEach(fn => fn(this.value));
+    };
+
+    // 成功/失败函数
+    const resolve = (result) => {
+      // 延迟执行，确保then先注册回调
+      setTimeout(() => changeStatus('fulfilled', result), 0);
+    };
+    const reject = (reason) => {
+      setTimeout(() => changeStatus('rejected', reason), 0);
+    };
+
+    // 捕获executor异常
+    try {
+      executor(resolve, reject);
+    } catch (error) {
+      reject(error);
+    }
+  }
+
+  // then方法实现
+  then(resolvedFn, rejectedFn) {
+    // 兼容非函数参数
+    resolvedFn = typeof resolvedFn === 'function' ? resolvedFn : (v) => v;
+    rejectedFn = typeof rejectedFn === 'function' ? rejectedFn : (e) => { throw e; };
+
+    return new MyPromise((resolve, reject) => {
+      // 成功回调包装
+      this.resolvedArr.push((value) => {
+        try {
+          const x = resolvedFn(value);
+          x instanceof MyPromise ? x.then(resolve, reject) : resolve(x);
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      // 失败回调包装
+      this.rejectedArr.push((reason) => {
+        try {
+          const x = rejectedFn(reason);
+          x instanceof MyPromise ? x.then(resolve, reject) : resolve(x);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+  }
+
+  // catch方法实现
+  catch(rejectedFn) {
+    return this.then(null, rejectedFn);
+  }
+
+  // all静态方法实现
+  static all(promises) {
+    return new MyPromise((resolve, reject) => {
+      const results = [];
+      let completedCount = 0;
+      promises.forEach((p, index) => {
+        MyPromise.resolve(p).then(
+          (result) => {
+            results[index] = result;
+            completedCount++;
+            if (completedCount === promises.length) resolve(results);
+          },
+          (reason) => reject(reason) // 一个失败则整体失败
+        );
+      });
+    });
+  }
+}
+```
+
+
+### 1.5 Promise异步特性关键结论
+- 构造函数（executor）**同步执行**，`then/catch`回调**异步执行（微任务）**；
+- `await` 本质是Promise语法糖，仅处理成功状态，失败需配合`try/catch`；
+- 异常捕获：`catch`后可继续链式调用`then`，且仅执行成功回调（因`catch`返回成功状态Promise）。
+
+---
+
+## 二、异步编程实战案例解析
+### 2.1 经典异步执行顺序案例
+```javascript
+async function async1() {
+  console.log('async1 start');
+  await async2(); // 等价于 Promise.resolve(async2()).then(...)
+  console.log('async1 end'); // 微任务
+}
+async function async2() {
+  console.log('async2'); // 同步执行
+}
+
+console.log('script start'); // 同步
+setTimeout(() => console.log('setTimeout'), 0); // 宏任务
+async1(); // 执行async1
+new Promise((resolve) => {
+  console.log('promise1'); // 同步
+  resolve();
+}).then(() => console.log('promise2')); // 微任务
+console.log('script end'); // 同步
+```
+
+#### 执行顺序解析
+1. 同步代码优先：`script start` → `async1 start` → `async2` → `promise1` → `script end`；
+2. 微任务执行：`promise2` → `async1 end`；
+3. 宏任务执行：`setTimeout`；
+4. 最终输出：`script start → async1 start → async2 → promise1 → script end → promise2 → async1 end → setTimeout`。
+
+---
+
+## 三、前后端通信核心方案
+### 3.1 主流通信方案对比
+| 方案 | 核心特点 | 适用场景 |
+|------|----------|----------|
+| Ajax（XHR） | 同源通信，基于HTTP/HTTPS，异步无刷新 | 同源下数据请求 |
+| Fetch | 基于Promise，原生API，更底层 | 现代浏览器异步请求 |
+| Axios | 基于XHR封装，支持Promise/拦截器/取消请求 | 前后端分离项目首选 |
+| WebSocket | 全双工通信，服务器主动推送，无同源限制 | 实时通信（如聊天、监控） |
+| Form表单提交 | 同步刷新页面，支持跨域，无需JS | 简单数据提交（无实时交互需求） |
+
+### 3.2 核心方案细节
+#### （1）Axios vs Fetch 关键差异
+| 特性 | Axios | Fetch |
+|------|-------|-------|
+| 异常处理 | 400/500状态码会触发reject | 仅网络错误触发reject，400/500视为成功 |
+| Cookie携带 | 默认携带 | 需手动配置`credentials: 'include'` |
+| 超时控制 | 原生支持`timeout`参数 | 需结合`Promise.race`手动实现 |
+| 响应转换 | 自动转换JSON数据 | 需手动调用`response.json()` |
+| 中断请求 | 支持`CancelToken` | 需用`AbortController` |
+
+#### （2）WebSocket核心特性
+- 协议标识：`ws`（明文）/`wss`（加密），基于TCP协议；
+- 无同源限制，支持二进制/文本数据传输；
+- 适用场景：实时聊天、股票行情、物联网监控。
+
+### 3.3 FormData与表单提交
+- **FormData**：HTML5新增API，用于序列化表单数据或异步上传文件，`Content-Type: multipart/form-data`；
+- **表单跨域**：表单可直接跨域提交（浏览器兼容特性），但无法获取跨域响应数据；
+- 实战示例：
+  ```javascript
+  // 表单数据序列化
+  const form = document.querySelector('#form');
+  const formData = new FormData(form);
+  formData.append('extra', '额外数据');
+
+  // 异步提交
+  axios.post('/api/submit', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+  ```
+
+---
+
+## 四、跨域问题与解决方案
+### 4.1 跨域定义与同源策略
+- **跨域**：协议、域名、端口任一不同即构成跨域，浏览器默认阻止跨域JS数据交互；
+- **同源策略**：限制不同源页面的JS访问，保护用户数据安全。
+
+### 4.2 主流跨域解决方案对比
+| 方案 | 核心原理 | 适用场景 |
+|------|----------|----------|
+| CORS | 服务器设置响应头（如`Access-Control-Allow-Origin`）允许跨域 | 现代前后端分离项目（推荐） |
+| JSONP | 利用`<script>`标签无跨域限制，加载回调函数包裹的JSON数据 | 老旧浏览器兼容，仅支持GET请求 |
+| 代理转发 | 本地代理（webpack-dev-server）/Nginx反向代理，规避浏览器跨域限制 | 开发环境/生产环境通用 |
+| document.domain | 主域名相同，子域名间设置`document.domain`统一域名 | 子域名跨域（如a.xxx.com与b.xxx.com） |
+| postMessage | 跨窗口/iframe通信API，允许不同源页面传递数据 | 跨窗口/iframe交互 |
+
+### 4.3 核心方案实战
+#### （1）CORS跨域（推荐）
+- 服务器配置（以Node.js为例）：
+  ```javascript
+  res.setHeader('Access-Control-Allow-Origin', 'https://xxx.com'); // 允许指定源
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE'); // 允许方法
+  res.setHeader('Access-Control-Allow-Credentials', 'true'); // 允许携带Cookie
+  ```
+- 客户端配置（Axios）：
+  ```javascript
+  axios.get('/api/data', { withCredentials: true }); // 携带Cookie需开启
+  ```
+- 简单请求vs复杂请求：
+  - 简单请求：GET/POST/HEAD，请求头仅含默认字段（如`Accept`），无预请求；
+  - 复杂请求：PUT/DELETE、自定义请求头、`Content-Type: application/json`，会先发送OPTIONS预请求验证权限。
+
+#### （2）JSONP跨域（仅GET）
+```javascript
+// 客户端
+function jsonpCallback(data) {
+  console.log('跨域数据:', data);
+}
+const script = document.createElement('script');
+script.src = 'https://api.xxx.com/data?callback=jsonpCallback';
+document.body.appendChild(script);
+
+// 服务器响应
+jsonpCallback({ name: 'xxx', value: 'xxx' });
+```
+
+#### （3）Webpack开发环境代理
+```javascript
+// webpack.config.js
+module.exports = {
+  devServer: {
+    proxy: {
+      '/api': {
+        target: 'https://api.xxx.com', // 目标服务器
+        changeOrigin: true, // 伪装同源
+        pathRewrite: { '^/api': '' } // 路径重写
+      }
+    }
+  }
+};
+```
+
+### 4.4 关键结论
+- JSONP不支持POST：本质是`<script>`标签加载，仅支持GET请求；
+- 跨域允许场景：表单提交、`<script>/<img>`等标签加载资源（无响应数据获取）；
+- 生产环境优先：CORS（简单配置）或Nginx反向代理（性能优）。
+
+---
+
+## 五、HTTP请求核心知识点
+### 5.1 GET/POST/PUT方法差异
+| 特性 | GET | POST | PUT |
+|------|-----|------|-----|
+| 参数位置 | URL拼接 | 请求体 | 请求体 |
+| 缓存 | 浏览器主动缓存 | 需手动配置 | 需手动配置 |
+| 幂等性 | 是（多次请求结果一致） | 否 | 是（更新资源，多次执行结果一致） |
+| 用途 | 查询资源 | 新增资源 | 更新资源 |
+| 数据大小限制 | 依赖URL长度（通常2KB） | 无限制 | 无限制 |
+
+### 5.2 异常捕获方案
+1. **同步异常**：`try/catch`捕获代码执行错误（无法捕获语法错误）；
+2. **异步异常**：
+   - Promise：`catch`方法捕获；
+   - 全局捕获：`window.onerror`（捕获所有运行时错误，返回true阻止控制台报错）；
+3. **网络异常**：Axios/Fetch拦截器捕获请求失败。
+
+---
+
+## 六、核心总结
+1. **Promise核心**：状态不可逆，链式调用解决回调地狱，`then/catch`返回新Promise；
+2. **异步执行顺序**：同步代码 → 微任务（Promise.then/await） → 宏任务（setTimeout/Ajax）；
+3. **跨域首选方案**：CORS（简单配置）、Nginx代理（生产环境）、JSONP（兼容老旧浏览器）；
+4. **前后端通信工具**：Axios（功能全、易用性高），Fetch（原生无依赖），WebSocket（实时通信）。

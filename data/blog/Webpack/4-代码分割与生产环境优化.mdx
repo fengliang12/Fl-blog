@@ -1,0 +1,300 @@
+---
+title: Webpack 代码分割与生产环境优化
+date: '2022-04-17'
+tags: ['Webpack']
+draft: false
+summary: 详解 Webpack 代码分割策略、Tree Shaking 原理及生产环境优化方案，提升应用加载性能
+---
+
+## 一、代码分割（Code Splitting）
+代码分割是 Webpack 优化的核心手段，将代码拆分为多个 `chunk`，实现按需加载，减少初始加载时间。
+
+### 1.1 为什么需要代码分割？
+- 单文件打包体积过大，导致首屏加载缓慢
+- 第三方库（如 Lodash、React）很少变动，无需每次重新打包
+- 不同路由/组件可按需加载，减少非必要资源加载
+
+### 1.2 实现方式
+#### 方式 1：多入口手动分割
+通过配置多个入口，将不同模块打包为独立文件。
+
+```javascript
+module.exports = {
+  entry: {
+    app: "./src/app.js", // 业务代码
+    vendor: "./src/vendor.js" // 第三方库（如 React、Lodash）
+  },
+  output: {
+    filename: "js/[name].[contenthash].js", // 使用 contenthash 缓存
+    path: path.resolve(__dirname, "dist")
+  }
+};
+```
+
+#### 方式 2：SplitChunksPlugin 自动分割
+Webpack 4+ 内置 `SplitChunksPlugin`，可自动提取公共代码和第三方库。
+
+**基础配置**：
+```javascript
+module.exports = {
+  optimization: {
+    splitChunks: {
+      chunks: "all" // 对所有类型的 chunk（同步/异步）生效
+    }
+  }
+};
+```
+
+**详细配置**：
+```javascript
+splitChunks: {
+  chunks: "all",
+  minSize: 30000, // 最小体积（30KB）
+  minChunks: 1, // 最少被引用次数
+  maxAsyncRequests: 5, // 异步加载最大请求数
+  maxInitialRequests: 3, // 初始加载最大请求数
+  cacheGroups: {
+    // 提取第三方库
+    vendors: {
+      test: /[\\/]node_modules[\\/]/, // 匹配 node_modules 中的模块
+      priority: -10, // 优先级（数字越大越优先）
+      name: "vendors" // 输出文件名
+    },
+    // 提取公共代码
+    default: {
+      minChunks: 2, // 至少被 2 个模块引用
+      priority: -20,
+      reuseExistingChunk: true // 复用已存在的 chunk
+    }
+  }
+}
+```
+
+#### 方式 3：动态导入（按需加载）
+通过 `import()` 语法动态加载模块，Webpack 会自动分割代码。
+
+**示例**：
+```javascript
+// 点击按钮时加载模块
+document.getElementById("btn").addEventListener("click", () => {
+  // 动态导入返回 Promise
+  import("./math.js").then(({ add }) => {
+    console.log(add(1, 2));
+  });
+});
+```
+
+**配合 Babel**：需安装 `@babel/plugin-syntax-dynamic-import` 支持动态导入语法。
+```bash
+npm install @babel/plugin-syntax-dynamic-import -D
+```
+
+```javascript
+// .babelrc
+{
+  "plugins": ["@babel/plugin-syntax-dynamic-import"]
+}
+```
+
+## 二、Tree Shaking 摇树优化
+移除未使用的代码（dead code），减小打包体积，仅支持 **ES6 模块**（静态导入）。
+
+### 2.1 启用条件
+1. 模式为 `production`（自动启用优化）
+2. 配置 `usedExports: true` 标记未使用代码
+3. 在 `package.json` 中设置 `sideEffects` 标记无副作用的文件
+
+### 2.2 配置步骤
+1. **Webpack 配置**：
+   ```javascript
+   module.exports = {
+     mode: "production",
+     optimization: {
+       usedExports: true // 标记未使用的导出
+     }
+   };
+   ```
+
+2. **package.json 配置**：
+   ```json
+   {
+     // 标记无副作用的文件（可安全删除未使用代码）
+     "sideEffects": [
+       "*.css", // CSS 文件有副作用（不能删除）
+       "*.scss"
+     ]
+   }
+   ```
+
+### 2.3 效果示例
+```javascript
+// math.js（ES6 模块）
+export const add = (a, b) => a + b;
+export const minus = (a, b) => a - b;
+
+// index.js
+import { add } from "./math";
+// 仅使用 add，minus 会被 Tree Shaking 移除
+console.log(add(1, 2));
+```
+
+## 三、生产环境优化策略
+### 3.1 输出文件名哈希
+使用 `contenthash` 确保文件内容变化时哈希值改变，利用浏览器缓存。
+
+```javascript
+output: {
+  filename: "js/[name].[contenthash:8].js",
+  chunkFilename: "js/[name].[contenthash:8].chunk.js" // 分割的 chunk 文件名
+}
+```
+
+### 3.2 CSS 优化
+1. **提取 CSS 并压缩**：
+   ```bash
+   npm install mini-css-extract-plugin css-minimizer-webpack-plugin -D
+   ```
+
+   ```javascript
+   const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+   const CssMinimizerPlugin = require("css-minimizer-webpack-plugin");
+
+   module.exports = {
+     module: {
+       rules: [
+         {
+           test: /\.css$/,
+           use: [MiniCssExtractPlugin.loader, "css-loader"]
+         }
+       ]
+     },
+     plugins: [
+       new MiniCssExtractPlugin({
+         filename: "css/[name].[contenthash:8].css"
+       })
+     ],
+     optimization: {
+       minimizer: [new CssMinimizerPlugin()] // 压缩 CSS
+     }
+   };
+   ```
+
+2. **自动前缀与移除无用 CSS**：
+   ```bash
+   npm install postcss-loader autoprefixer purgecss-webpack-plugin -D
+   ```
+
+### 3.3 代码压缩
+Webpack 5 内置 `terser-webpack-plugin` 压缩 JS，生产模式自动启用。
+
+**自定义配置**：
+```javascript
+const TerserPlugin = require("terser-webpack-plugin");
+
+module.exports = {
+  optimization: {
+    minimizer: [
+      new TerserPlugin({
+        parallel: true, // 多进程压缩
+        terserOptions: {
+          compress: {
+            drop_console: true // 移除 console
+          }
+        }
+      })
+    ]
+  }
+};
+```
+
+### 3.4 预加载与预获取
+通过 `webpackPrefetch` 或 `webpackPreload` 指令优化资源加载时机。
+
+- **prefetch（预获取）**：浏览器空闲时加载未来可能需要的资源
+- **preload（预加载）**：当前页面可能需要的资源，并行加载
+
+```javascript
+// 预获取：点击按钮时可能需要的模块
+document.getElementById("btn").addEventListener("click", () => {
+  import(/* webpackPrefetch: true */ "./modal.js").then(({ open }) => {
+    open();
+  });
+});
+```
+
+## 四、打包分析与优化
+使用 `webpack-bundle-analyzer` 可视化分析打包结果，定位体积过大的模块。
+
+**安装与配置**：
+```bash
+npm install webpack-bundle-analyzer -D
+```
+
+```javascript
+const BundleAnalyzerPlugin = require("webpack-bundle-analyzer").BundleAnalyzerPlugin;
+
+module.exports = {
+  plugins: [
+    new BundleAnalyzerPlugin() // 启动后自动打开分析页面
+  ]
+};
+```
+
+**优化方向**：
+1. 拆分体积过大的第三方库（如 Lodash 可按需导入）
+2. 移除不必要的依赖
+3. 使用更轻量的替代库（如 moment → dayjs）
+
+## 五、开发/生产环境分离配置
+使用 `webpack-merge` 分离公共配置、开发配置和生产配置，提高维护性。
+
+**安装**：
+```bash
+npm install webpack-merge -D
+```
+
+**配置结构**：
+```
+config/
+├─ webpack.common.js   # 公共配置
+├─ webpack.dev.js      # 开发环境配置
+└─ webpack.prod.js     # 生产环境配置
+```
+
+**示例**：
+```javascript
+// webpack.common.js（公共配置）
+module.exports = {
+  entry: "./src/index.js",
+  plugins: [new HtmlWebpackPlugin({ template: "./src/index.html" })]
+};
+
+// webpack.prod.js（生产配置）
+const { merge } = require("webpack-merge");
+const common = require("./webpack.common");
+const CleanWebpackPlugin = require("clean-webpack-plugin");
+
+module.exports = merge(common, {
+  mode: "production",
+  output: {
+    filename: "js/[name].[contenthash].js",
+    path: path.resolve(__dirname, "../dist")
+  },
+  plugins: [new CleanWebpackPlugin()]
+});
+```
+
+**命令配置**：
+```json
+"scripts": {
+  "build": "webpack --config config/webpack.prod.js",
+  "dev": "webpack serve --config config/webpack.dev.js"
+}
+```
+
+## 总结
+生产环境优化核心目标是**减小体积、提高加载速度**：
+- 代码分割实现按需加载，利用缓存
+- Tree Shaking 移除无用代码
+- 压缩 CSS/JS，优化资源加载策略
+- 分离环境配置，提高工程可维护性
