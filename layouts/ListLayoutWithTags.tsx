@@ -114,9 +114,13 @@ export default function ListLayoutWithTags({
                 )}
                 <ul>
                   {sortedTags.map((t) => {
+                    const currentTag = decodeURIComponent(
+                      (pathname.split('/tags/')[1] || '').split('/')[0]
+                    )
+                    const isActive = currentTag === slug(t)
                     return (
                       <li key={t} className="my-3">
-                        {decodeURI(pathname.split('/tags/')[1]) === slug(t) ? (
+                        {isActive ? (
                           <h3 className="text-primary-500 inline px-3 py-2 text-sm font-bold uppercase">
                             {`${t} (${tagCounts[t]})`}
                           </h3>
