@@ -1,14 +1,14 @@
 ---
-title: V8引擎底层执行全链路：从代码解析到堆栈内存与JIT优化
+title: V8底层执行全链路：从代码解析到堆栈内存与JIT优化
 date: '2021-11-24'
-tags: ['V8引擎', 'JavaScript']
+tags: ['V8', 'JavaScript']
 draft: false
-summary: 系统梳理V8引擎从代码解析、AST转换、JIT编译（Ignition+TurboFan）到堆栈内存管理、事件循环的完整执行链路，结合专业概念解析底层逻辑
+summary: 系统梳理V8从代码解析、AST转换、JIT编译（Ignition+TurboFan）到堆栈内存管理、事件循环的完整执行链路，结合专业概念解析底层逻辑
 ---
 
-## V8引擎JavaScript执行全链路：从代码到运行的底层逻辑
+## V8JavaScript执行全链路：从代码到运行的底层逻辑
 
-V8引擎对JavaScript的执行是**编译-执行-优化-内存管理**的协同过程，核心包含**代码编译流水线**、**JIT动态优化**、**执行上下文与堆栈管理**、**异步调度与内存回收**四大模块，以下是专业级梳理：
+V8对JavaScript的执行是**编译-执行-优化-内存管理**的协同过程，核心包含**代码编译流水线**、**JIT动态优化**、**执行上下文与堆栈管理**、**异步调度与内存回收**四大模块，以下是专业级梳理：
 
 
 ### 一、代码编译流水线：从源代码到字节码
@@ -196,16 +196,16 @@ flowchart TD
     AD --> AE[Master Thread<br>主线程执行（处理ECStack/EC）]
 
     %% 核心处理单元
-    K & S & AB --> AF[V8 Engine<br>V8引擎（统筹全流程）]
+    K & S & AB --> AF[V8 Engine<br>V8（统筹全流程）]
     AF --> AG[Instruction<br>指令支持（setInterval等）]
     AF --> AH[Process network/Object observe<br>网络处理/对象监听]
     ```
 
-## V8引擎执行与任务调度思维导图
+## V8执行与任务调度思维导图
 <div className="flex justify-center my-4">
   <Image
     src="/static/images/v8.png"
-    alt="V8引擎执行与任务调度示意图"
+    alt="V8执行与任务调度示意图"
     width={1200}
     height={680}
     className="cartoon-card"
