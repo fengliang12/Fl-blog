@@ -1,0 +1,506 @@
+---
+title: 手撕Vuex原理：从核心实现到模块化机制
+date: '2022-06-01'
+tags: ['Vuex', '状态管理', 'Vue']
+draft: false
+summary: 详解Vuex的核心实现原理，包括响应式状态管理、模块化机制、命名空间和插件系统
+---
+
+## 一、Vuex核心概念
+
+Vuex是Vue的集中式状态管理库，核心解决：
+- **组件共享状态**：统一管理跨组件数据
+- **可预测性**：通过mutation同步修改状态
+- **异步处理**：通过action处理异步逻辑
+
+核心架构：
+```
+State → View → Action → Mutation → State
+```
+
+## 二、Vuex基础实现
+
+### 1. 插件安装机制
+
+```javascript
+// vuex/index.js
+import { Store, install } from './store'
+
+export default { Store, install }
+export { Store, install }
+```
+
+```javascript
+// vuex/store.js
+import applyMixin from './mixin'
+import ModuleCollection from './module/module-collection'
+import { forEachValue } from './utils'
+import { resetStoreVM, installModule } from './store-util'
+
+let Vue
+
+export class Store {
+  constructor(options = {}) {
+    // 1. Vue构造函数引用
+    if (!Vue && typeof window !== 'undefined' && window.Vue) {
+      install(window.Vue)
+    }
+
+    // 2. 模块收集
+    this._modules = new ModuleCollection(options)
+    
+    // 3. 存储mutations/actions/getters
+    this._mutations = Object.create(null)
+    this._actions = Object.create(null)
+    this._wrappedGetters = Object.create(null)
+    
+    // 4. 安装模块
+    const state = this._modules.root.state
+    installModule(this, state, [], this._modules.root)
+    
+    // 5. 响应式处理
+    resetStoreVM(this, state)
+    
+    // 6. 插件执行
+    if (options.plugins) {
+      options.plugins.forEach(plugin => plugin(this))
+    }
+  }
+  
+  // 状态访问器
+  get state() {
+    return this._vm._data.$$state
+  }
+  
+  // 提交mutation
+  commit = (type, payload) => {
+    const entry = this._mutations[type]
+    if (entry) {
+      entry.forEach(fn => fn(payload))
+    }
+  }
+  
+  // 分发action
+  dispatch = (type, payload) => {
+    const entry = this._actions[type]
+    if (entry) {
+      return Promise.all(entry.map(fn => fn(payload)))
+    }
+  }
+}
+
+export function install(_Vue) {
+  Vue = _Vue
+  applyMixin(Vue)
+}
+```
+
+### 2. 全局混入实现
+
+```javascript
+// vuex/mixin.js
+export default function applyMixin(Vue) {
+  Vue.mixin({
+    beforeCreate() {
+      if (this.$options.store) {
+        // 根组件挂载store
+        this.$store = this.$options.store
+      } else if (this.$options.parent && this.$options.parent.$store) {
+        // 子组件继承父组件的store
+        this.$store = this.$options.parent.$store
+      }
+    }
+  })
+}
+```
+
+### 3. 响应式状态核心
+
+```javascript
+// vuex/store-util.js
+export function resetStoreVM(store, state) {
+  const oldVm = store._vm
+  
+  // 处理getters
+  const computed = {}
+  store.getters = {}
+  
+  // 遍历所有getters
+  forEachValue(store._wrappedGetters, (fn, key) => {
+    computed[key] = () => fn(store)
+    Object.defineProperty(store.getters, key, {
+      get: () => store._vm[key],
+      enumerable: true
+    })
+  })
+  
+  // 创建Vue实例实现响应式
+  store._vm = new Vue({
+    data: {
+      $$state: state // $开头不会被代理
+    },
+    computed
+  })
+  
+  // 销毁旧实例
+  if (oldVm) {
+    Vue.nextTick(() => oldVm.$destroy())
+  }
+}
+```
+
+## 三、核心功能实现
+
+### 1. State实现
+
+```javascript
+// 利用Vue实例的响应式特性
+this._vm = new Vue({
+  data: {
+    $$state: state // 内部状态
+  }
+})
+
+// 外部通过store.state访问
+get state() {
+  return this._vm._data.$$state
+}
+```
+
+### 2. Getters实现
+
+```javascript
+// 在resetStoreVM中
+forEachValue(store._wrappedGetters, (fn, key) => {
+  // 计算属性实现缓存
+  computed[key] = () => fn(store)
+  
+  // 定义getter访问器
+  Object.defineProperty(store.getters, key, {
+    get: () => store._vm[key],
+    enumerable: true
+  })
+})
+```
+
+### 3. Mutations实现
+
+```javascript
+// 在installModule中
+module.forEachMutation((mutation, key) => {
+  const namespacedType = namespace + key
+  store._mutations[namespacedType] = store._mutations[namespacedType] || []
+  
+  store._mutations[namespacedType].push((payload) => {
+    mutation.call(store, local.state, payload)
+  })
+})
+```
+
+### 4. Actions实现
+
+```javascript
+// 在installModule中
+module.forEachAction((action, key) => {
+  const namespacedType = namespace + key
+  store._actions[namespacedType] = store._actions[namespacedType] || []
+  
+  store._actions[namespacedType].push((payload) => {
+    const res = action.call(store, {
+      dispatch: store.dispatch,
+      commit: store.commit,
+      getters: store.getters,
+      state: local.state,
+      rootState: store.state
+    }, payload)
+    
+    // 确保返回Promise
+    if (!isPromise(res)) {
+      return Promise.resolve(res)
+    }
+    return res
+  })
+})
+```
+
+## 四、模块化机制实现
+
+### 1. 模块收集
+
+```javascript
+// vuex/module/module-collection.js
+export default class ModuleCollection {
+  constructor(options) {
+    this.register([], options)
+  }
+  
+  register(path, rawModule) {
+    // 创建模块实例
+    const newModule = new Module(rawModule)
+    
+    if (path.length === 0) {
+      this.root = newModule // 根模块
+    } else {
+      // 找到父模块
+      const parent = this.get(path.slice(0, -1))
+      parent.addChild(path[path.length - 1], newModule)
+    }
+    
+    // 递归注册子模块
+    if (rawModule.modules) {
+      forEachValue(rawModule.modules, (child, key) => {
+        this.register(path.concat(key), child)
+      })
+    }
+  }
+  
+  get(path) {
+    return path.reduce((module, key) => {
+      return module.getChild(key)
+    }, this.root)
+  }
+  
+  // 获取命名空间
+  getNamespace(path) {
+    let module = this.root
+    return path.reduce((namespace, key) => {
+      module = module.getChild(key)
+      return namespace + (module.namespaced ? key + '/' : '')
+    }, '')
+  }
+}
+```
+
+### 2. 模块类设计
+
+```javascript
+// vuex/module/module.js
+export default class Module {
+  constructor(rawModule) {
+    this._rawModule = rawModule
+    this._children = Object.create(null)
+    this.state = rawModule.state
+  }
+  
+  get namespaced() {
+    return !!this._rawModule.namespaced
+  }
+  
+  addChild(key, module) {
+    this._children[key] = module
+  }
+  
+  getChild(key) {
+    return this._children[key]
+  }
+  
+  // 遍历方法
+  forEachMutation(fn) {
+    if (this._rawModule.mutations) {
+      forEachValue(this._rawModule.mutations, fn)
+    }
+  }
+  
+  forEachAction(fn) {
+    if (this._rawModule.actions) {
+      forEachValue(this._rawModule.actions, fn)
+    }
+  }
+  
+  forEachGetter(fn) {
+    if (this._rawModule.getters) {
+      forEachValue(this._rawModule.getters, fn)
+    }
+  }
+  
+  forEachChild(fn) {
+    forEachValue(this._children, fn)
+  }
+}
+```
+
+### 3. 模块安装
+
+```javascript
+// vuex/store-util.js
+export function installModule(store, rootState, path, module) {
+  const isRoot = !path.length
+  const namespace = store._modules.getNamespace(path)
+  
+  // 注册模块状态到根状态
+  if (!isRoot) {
+    const parentState = getNestedState(rootState, path.slice(0, -1))
+    const moduleName = path[path.length - 1]
+    
+    // 响应式添加模块状态
+    Vue.set(parentState, moduleName, module.state)
+  }
+  
+  // 局部上下文
+  const local = module.context = makeLocalContext(store, namespace, path)
+  
+  // 安装mutations/actions/getters
+  module.forEachMutation((mutation, key) => {
+    const namespacedType = namespace + key
+    registerMutation(store, namespacedType, mutation, local)
+  })
+  
+  module.forEachAction((action, key) => {
+    const namespacedType = namespace + key
+    registerAction(store, namespacedType, action, local)
+  })
+  
+  module.forEachGetter((getter, key) => {
+    const namespacedType = namespace + key
+    registerGetter(store, namespacedType, getter, local)
+  })
+  
+  // 递归安装子模块
+  module.forEachChild((child, key) => {
+    installModule(store, rootState, path.concat(key), child)
+  })
+}
+```
+
+## 五、高级特性实现
+
+### 1. 命名空间
+
+```javascript
+// 获取命名空间
+getNamespace(path) {
+  let module = this.root
+  return path.reduce((namespace, key) => {
+    module = module.getChild(key)
+    return namespace + (module.namespaced ? key + '/' : '')
+  }, '')
+}
+
+// 使用命名空间
+const namespacedType = namespace + key
+store._mutations[namespacedType] = [...]
+```
+
+### 2. 动态模块注册
+
+```javascript
+// store.js
+registerModule(path, rawModule) {
+  if (typeof path === 'string') path = [path]
+  
+  // 注册模块
+  this._modules.register(path, rawModule)
+  
+  // 安装模块
+  installModule(this, this.state, path, this._modules.get(path))
+  
+  // 更新VM
+  resetStoreVM(this, this.state)
+}
+
+unregisterModule(path) {
+  if (typeof path === 'string') path = [path]
+  
+  const parent = this._modules.get(path.slice(0, -1))
+  const key = path[path.length - 1]
+  const module = parent.getChild(key)
+  
+  // 移除模块状态
+  this._withCommit(() => {
+    const parentState = getNestedState(this.state, path.slice(0, -1))
+    Vue.delete(parentState, key)
+  })
+  
+  // 卸载模块
+  uninstallModule(this, path, module)
+  
+  // 更新VM
+  resetStoreVM(this, this.state)
+}
+```
+
+### 3. 插件系统
+
+```javascript
+// store.js
+constructor(options) {
+  // 订阅器
+  this._subscribers = []
+  
+  // 执行插件
+  if (options.plugins) {
+    options.plugins.forEach(plugin => plugin(this))
+  }
+}
+
+// 订阅mutation
+subscribe(fn) {
+  const subs = this._subscribers
+  if (subs.indexOf(fn) < 0) {
+    subs.push(fn)
+  }
+  return () => {
+    const i = subs.indexOf(fn)
+    if (i > -1) {
+      subs.splice(i, 1)
+    }
+  }
+}
+
+// 内部提交时触发订阅
+_withCommit(fn) {
+  const committing = this._committing
+  this._committing = true
+  fn()
+  this._committing = committing
+  
+  // 触发订阅器
+  if (!committing) {
+    this._subscribers.forEach(sub => sub(this._committedMutation, this.state))
+  }
+}
+```
+
+### 4. 辅助函数实现
+
+```javascript
+// vuex/helpers.js
+export const mapState = normalizeNamespace((namespace, states) => {
+  const res = {}
+  normalizeMap(states).forEach(({ key, val }) => {
+    res[key] = function mappedState() {
+      let state = this.$store.state
+      let getters = this.$store.getters
+      
+      if (namespace) {
+        const module = getModuleByNamespace(this.$store, 'mapState', namespace)
+        if (!module) {
+          return
+        }
+        state = module.context.state
+        getters = module.context.getters
+      }
+      
+      return typeof val === 'function'
+        ? val.call(this, state, getters)
+        : state[val]
+    }
+  })
+  return res
+})
+
+// 其他辅助函数类似
+export const mapGetters = normalizeNamespace(...)
+export const mapMutations = normalizeNamespace(...)
+export const mapActions = normalizeNamespace(...)
+```
+
+## 六、Vuex核心原理总结
+
+1. **响应式核心**：利用Vue实例的响应式系统实现state的响应式
+2. **模块化**：通过ModuleCollection收集模块，installModule安装模块
+3. **命名空间**：通过路径生成命名空间，实现模块隔离
+4. **单向数据流**：严格遵循State → Mutation → State的变更流程
+5. **插件系统**：通过订阅器模式实现插件扩展
+
+Vuex本质是一个基于Vue响应式系统的状态管理容器，通过严格的规则保证状态变更的可预测性，是大型Vue应用的必备工具！

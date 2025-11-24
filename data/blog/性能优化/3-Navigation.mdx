@@ -1,0 +1,233 @@
+---
+title: 前端性能监控必学：Performance.timing API全解析
+date: '2025-01-28'
+tags: ['性能优化']
+draft: false
+summary: 从基础概念到实战计算，一文吃透performance.timing的用法、指标含义和工程化落地方案
+---
+
+## 前言：为什么需要懂Performance.timing？
+
+作为前端开发者，你是否遇到过这些问题：  
+- 页面加载慢，但不知道慢在哪里？  
+- 想优化性能，却找不到具体的瓶颈点？  
+- 老板问"首屏加载时间多少？"，只能凭感觉回答？  
+
+**performance.timing API**就是解决这些问题的"手术刀"——它能精准捕获页面加载各阶段的时间戳，让性能问题"无处遁形"。今天这篇文章，我会从API详解、指标计算到实战监控，带你彻底掌握这个前端性能监控的核心工具。
+
+
+## 一、Performance.timing是什么？
+
+`performance.timing`是浏览器提供的原生API，属于**Navigation Timing规范**的一部分，它记录了页面从开始导航到完全加载的**所有关键时间节点**——从DNS查询到DOM解析完成，从TCP连接建立到资源加载结束，每个阶段都有精确的时间戳。
+
+虽然它被标记为"已过时"（推荐使用`PerformanceNavigationTiming`），但由于兼容性极佳（支持IE9+），至今仍是前端性能监控的基础工具。
+
+### 核心特点：
+- 只读对象：所有属性都是毫秒级时间戳（相对于`navigationStart`）；
+- 全链路覆盖：包含导航、网络、DOM处理三大阶段；
+- 零侵入性：浏览器自动记录，无需额外埋点。
+
+
+## 二、Performance.timing核心属性详解
+
+先看一张完整的时间线图，直观理解各属性的位置：
+
+```
+navigationStart → redirectStart → redirectEnd → fetchStart → 
+domainLookupStart → domainLookupEnd → connectStart → connectEnd → 
+requestStart → responseStart → responseEnd → domLoading → 
+domInteractive → domContentLoadedEventStart → domContentLoadedEventEnd → 
+domComplete → loadEventStart → loadEventEnd
+```
+
+### 1. 导航阶段：页面跳转的起点
+- **navigationStart**：浏览器开始导航到当前页面的时间（整个时间线的起点）；
+- **unloadEventStart/End**：上一个页面的unload事件开始/结束时间（如果是同域名跳转）；
+- **redirectStart/End**：重定向开始/结束时间（同源重定向才会记录）。
+
+### 2. 网络阶段：请求资源的全过程
+- **fetchStart**：浏览器准备发起请求的时间（检查缓存前）；
+- **domainLookupStart/End**：DNS查询开始/结束时间；
+- **connectStart/End**：TCP连接建立开始/结束时间（包含SSL握手）；
+- **secureConnectionStart**：HTTPS握手开始时间（HTTP为0）；
+- **requestStart**：浏览器向服务器发送请求的时间；
+- **responseStart/End**：服务器返回第一个字节/最后一个字节的时间。
+
+### 3. DOM处理阶段：页面渲染的关键节点
+- **domLoading**：浏览器开始解析HTML的时间；
+- **domInteractive**：DOM解析完成（DOMContentLoaded触发前）；
+- **domContentLoadedEventStart/End**：DOMContentLoaded事件开始/结束时间；
+- **domComplete**：DOM和资源都加载完成的时间；
+- **loadEventStart/End**：load事件开始/结束时间（页面完全加载）。
+
+
+## 三、关键性能指标计算实战
+
+光懂属性还不够，要能通过这些时间戳算出有业务价值的指标：
+
+### 1. 网络相关指标
+```js
+const timing = performance.timing;
+
+// DNS查询耗时
+const dnsTime = timing.domainLookupEnd - timing.domainLookupStart;
+
+// TCP连接耗时（含HTTPS握手）
+const tcpTime = timing.connectEnd - timing.connectStart;
+
+// TTFB（首字节时间）
+const ttfb = timing.responseStart - timing.requestStart;
+
+// 响应传输耗时（服务器返回数据的时间）
+const responseTime = timing.responseEnd - timing.responseStart;
+```
+
+### 2. 页面加载指标
+```js
+// 白屏时间（用户看到第一个内容的时间）
+const blankTime = timing.responseStart - timing.navigationStart;
+
+// DOM解析耗时
+const domParseTime = timing.domInteractive - timing.domLoading;
+
+// DOMContentLoaded时间（DOM加载完成）
+const domReadyTime = timing.domContentLoadedEventEnd - timing.navigationStart;
+
+// 页面完全加载时间
+const loadTime = timing.loadEventEnd - timing.navigationStart;
+```
+
+### 3. 核心业务指标
+```js
+// 首屏时间（通常结合FCP，这里用DOMInteractive估算）
+const firstScreenTime = timing.domInteractive - timing.navigationStart;
+
+// 可交互时间（TTI的近似值）
+const tti = timing.domContentLoadedEventEnd - timing.navigationStart;
+```
+
+
+## 四、从Performance.timing到新API：PerformanceNavigationTiming
+
+虽然`performance.timing`很好用，但它有个致命缺点：**只能记录当前页面的性能数据**，无法获取单资源的加载时间。
+
+因此，W3C推出了**PerformanceNavigationTiming**（属于Navigation Timing Level 2），它是`performance.timing`的升级版：
+
+### 新API的优势：
+1. 以`performance.getEntriesByType('navigation')[0]`形式获取，支持多页面记录；
+2. 提供更语义化的属性（如`duration`直接返回总加载时间）；
+3. 兼容`performance.timing`的所有属性，且支持更细粒度的指标。
+
+### 新API使用示例：
+```js
+const navEntry = performance.getEntriesByType('navigation')[0];
+
+// 直接获取TTFB
+const ttfb = navEntry.responseStart - navEntry.requestStart;
+
+// 重定向次数
+const redirectCount = navEntry.redirectCount;
+
+// 导航类型（navigate/reload/back_forward）
+const navType = navEntry.type;
+```
+
+
+## 五、工程化落地：性能监控系统实战
+
+懂了理论，还要知道怎么在项目中实际应用：
+
+### 1. 基础监控脚本
+```js
+// 页面加载完成后执行
+window.addEventListener('load', () => {
+  const timing = performance.timing;
+  const metrics = {
+    dnsTime: timing.domainLookupEnd - timing.domainLookupStart,
+    tcpTime: timing.connectEnd - timing.connectStart,
+    ttfb: timing.responseStart - timing.requestStart,
+    domReadyTime: timing.domContentLoadedEventEnd - timing.navigationStart,
+    loadTime: timing.loadEventEnd - timing.navigationStart,
+    blankTime: timing.responseStart - timing.navigationStart
+  };
+  
+  // 上报到后端
+  fetch('/api/performance', {
+    method: 'POST',
+    body: JSON.stringify(metrics)
+  });
+});
+```
+
+### 2. 结合Web Vitals的完整监控
+```js
+import { getLCP, getFID, getCLS } from 'web-vitals';
+
+// 收集核心指标
+const reportMetrics = async () => {
+  // 基础timing指标
+  const navEntry = performance.getEntriesByType('navigation')[0];
+  
+  // Web Vitals指标
+  const lcp = await getLCP(metric => metric.value);
+  const fid = await getFID(metric => metric.value);
+  const cls = await getCLS(metric => metric.value);
+  
+  const data = {
+    ttfb: navEntry.responseStart - navEntry.requestStart,
+    loadTime: navEntry.loadEventEnd - navEntry.navigationStart,
+    lcp,
+    fid,
+    cls,
+    url: window.location.href,
+    userAgent: navigator.userAgent
+  };
+  
+  // 上报数据
+  await fetch('/api/report', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+};
+
+// 页面隐藏时上报
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    reportMetrics();
+  }
+});
+```
+
+### 3. 数据可视化与告警
+- 用Grafana/ELK展示性能数据趋势；
+- 设置阈值告警（如TTFB>500ms时发邮件）；
+- 按页面/地区/设备维度分析性能瓶颈。
+
+
+## 六、常见问题与注意事项
+
+### 1. 为什么有些属性值为0？
+- 重定向属性为0：非同源重定向或无重定向；
+- secureConnectionStart为0：HTTP协议；
+- unload相关属性为0：不是同域名跳转。
+
+### 2. 跨域资源的时间戳获取不到？
+需要在服务器端设置`Timing-Allow-Origin`响应头，允许前端获取跨域资源的性能数据。
+
+### 3. 为什么loadEventEnd为0？
+页面还没加载完成就获取了timing数据，要在`load`事件后执行。
+
+
+## 七、总结：Performance.timing的价值
+
+虽然`performance.timing`已被标记为"过时"，但它仍是前端性能监控的**基础中的基础**——理解它的时间线逻辑，才能更好地掌握新的Performance API。
+
+性能优化的第一步是"量化"，而`performance.timing`就是帮你量化性能的工具。记住：**没有数据的优化都是瞎猜**，学会用API说话，才能真正解决性能问题。
+
+最后，推荐几个实用工具：
+- Lighthouse：Chrome自带的性能审计工具；
+- WebPageTest：专业的性能测试平台；
+- Calibre：企业级性能监控工具。
+
+用好这些工具，结合Performance API，你就能成为真正的"性能优化专家"！

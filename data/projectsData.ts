@@ -7,20 +7,16 @@ interface Project {
 
 const projectsData: Project[] = [
   {
-    title: 'A Search Engine',
-    description: `What if you could look up any information in the world? Webpages, images, videos
-    and more. Google has many features to help you find exactly what you're looking
-    for.`,
-    imgSrc: '/static/images/google.png',
-    href: 'https://www.google.com',
+    title: 'Web3 University',
+    description: `A decentralized university powered by blockchain, token incentives, and DAO governance, building a global, trustworthy, and transparent digital education ecosystem for learners and educators.`,
+    imgSrc: '/static/images/university.png',
+    href: 'https://web3-university.top/',
   },
   {
-    title: 'The Time Machine',
-    description: `Imagine being able to travel back in time or to the future. Simple turn the knob
-    to the desired date and press "Go". No more worrying about lost keys or
-    forgotten headphones with this simple yet affordable solution.`,
+    title: 'The Time Chat',
+    description: `这是一个用 Cloudflare Workers 搭的简单中转小工具，专门给我 Cloudflare Pages 上的 React 聊天框页面服务～前端点聊天框发消息，会先经过这个 Worker 中转再去调 OpenAI 的 API，主要就是试试手，解决下前端直接调 API 的跨域问题。`,
     imgSrc: '/static/images/time-machine.jpg',
-    href: '/blog/the-time-machine',
+    href: 'https://fengqilin168.top/',
   },
 ]
 

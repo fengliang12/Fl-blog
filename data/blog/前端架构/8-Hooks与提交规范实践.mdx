@@ -1,0 +1,417 @@
+---
+slug: "code-quality-and-standards"
+title: "项目的代码质量与规范：Git Hooks与提交规范实践"
+date: "2025-10-24"
+tags: ["前端架构", "Git Hooks"]
+summary: "使用Git Hooks和提交规范保障代码质量的实践经验"
+---
+
+# 第七篇：代码质量与规范
+
+## Web3项目的代码质量与规范：Git Hooks与提交规范实践
+
+在Web3项目开发中，代码质量和规范尤为重要。区块链应用的特殊性使得代码错误可能导致严重的安全问题和资产损失。为了保障项目质量，我在项目中引入了一套完整的代码质量保障体系，包括Git Hooks、代码规范检查和提交信息规范，确保团队开发的一致性和代码质量。
+
+## 为什么需要代码质量保障体系？
+
+### Web3项目的特殊性
+
+Web3项目与传统Web项目相比，对代码质量有更高的要求：
+
+- **安全性**：代码漏洞可能导致用户资产损失
+- **可靠性**：智能合约交互需要高度可靠的代码
+- **可审计性**：开源项目需要清晰的代码和提交记录
+- **协作性**：多团队协作需要统一的代码规范
+- **长期维护**：区块链项目通常需要长期维护
+
+### 质量保障的核心价值
+
+- 提前发现潜在的代码错误和安全隐患
+- 保证代码风格一致性，提高可读性和可维护性
+- 规范提交信息，便于代码审查和版本管理
+- 自动化执行质量检查，提高开发效率
+- 降低代码合并冲突和维护成本
+
+## Git Hooks配置
+
+我选择了Husky + lint-staged的组合来实现Git Hooks功能：
+
+### 1. 安装依赖
+
+```bash
+# 安装Husky和lint-staged
+pnpm add -D husky@9.1.7 lint-staged@16.1.4
+```
+
+### 2. 初始化配置
+
+```bash
+# 初始化Husky
+npx husky init
+
+# 创建pre-commit hook
+echo "npx lint-staged" > .husky/pre-commit
+
+# 创建commit-msg hook
+echo "npx --no -- commitlint --edit \$1" > .husky/commit-msg
+```
+
+### 3. Husky配置说明
+
+Husky v9的配置相比之前版本有较大简化：
+
+```json
+// package.json
+{
+  "scripts": {
+    "prepare": "husky", // Husky初始化脚本
+    "lint:staged": "lint-staged",
+    "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
+    "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix",
+    "format": "prettier --write src/**/*",
+    "format:check": "prettier --check src/**/*"
+  }
+}
+```
+
+### 4. lint-staged配置
+
+```json
+// package.json
+{
+  "lint-staged": {
+    "src/**/*.{ts,tsx,js,jsx}": [
+      "eslint --fix --max-warnings=0",
+      "prettier --write",
+      "git add"
+    ],
+    "src/**/*.{css,scss,less}": [
+      "prettier --write",
+      "git add"
+    ],
+    "*.{json,md,yml}": [
+      "prettier --write",
+      "git add"
+    ]
+  }
+}
+```
+
+### 5. 自定义Hook示例
+
+```bash
+# .husky/pre-push
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# 推送前运行类型检查和单元测试
+echo "Running pre-push checks..."
+pnpm run type-check
+pnpm run test:unit:ci
+```
+
+## 提交规范配置
+
+采用Conventional Commits规范，配合commitlint和commitizen工具：
+
+### 1. 安装依赖
+
+```bash
+# 安装commitlint和配置
+pnpm add -D @commitlint/cli@19.8.1 @commitlint/config-conventional@19.8.1
+
+# 安装commitizen和自定义适配器
+pnpm add -D commitizen@4.3.1 cz-customizable@7.5.1
+```
+
+### 2. commitlint配置
+
+```js
+// commitlint.config.js
+module.exports = {
+  extends: ["@commitlint/config-conventional"],
+  rules: {
+    "type-enum": [
+      2,
+      "always",
+      [
+        "feat",     // 新功能
+        "fix",      // 修复bug
+        "docs",     // 文档变更
+        "style",    // 代码格式（不影响功能）
+        "refactor", // 代码重构
+        "perf",     // 性能优化
+        "test",     // 添加或修改测试
+        "build",    // 构建流程或外部依赖变更
+        "ci",       // CI配置变更
+        "chore",    // 构建过程或辅助工具变更
+        "revert",   // 回滚提交
+        "web3",     // Web3相关变更
+      ],
+    ],
+    "scope-enum": [
+      2,
+      "always",
+      [
+        "core",     // 核心功能
+        "ui",       // UI组件
+        "wallet",   // 钱包相关
+        "contract", // 合约交互
+        "api",      // API相关
+        "config",   // 配置相关
+        "docs",     // 文档
+        "test",     // 测试
+        "build",    // 构建
+      ],
+    ],
+    "subject-case": [0], // 允许subject使用任意大小写
+    "subject-max-length": [2, "always", 100], // subject最大长度100字符
+  },
+};
+```
+
+### 3. commitizen配置
+
+```json
+// package.json
+{
+  "config": {
+    "commitizen": {
+      "path": "cz-customizable"
+    }
+  }
+}
+```
+
+```js
+// .cz-config.js
+module.exports = {
+  types: [
+    { value: 'feat', name: 'feat:     新功能' },
+    { value: 'fix', name: 'fix:      修复bug' },
+    { value: 'docs', name: 'docs:     文档变更' },
+    { value: 'style', name: 'style:    代码格式（不影响功能）' },
+    { value: 'refactor', name: 'refactor: 代码重构' },
+    { value: 'perf', name: 'perf:     性能优化' },
+    { value: 'test', name: 'test:     添加、修改测试用例' },
+    { value: 'build', name: 'build:    构建流程、外部依赖变更' },
+    { value: 'ci', name: 'ci:       修改CI配置、脚本' },
+    { value: 'chore', name: 'chore:    对构建过程或辅助工具的更改' },
+    { value: 'revert', name: 'revert:   回滚commit' },
+    { value: 'web3', name: 'web3:     Web3相关功能变更' },
+  ],
+
+  scopes: [
+    { name: 'core' },
+    { name: 'ui' },
+    { name: 'wallet' },
+    { name: 'contract' },
+    { name: 'api' },
+    { name: 'config' },
+    { name: 'docs' },
+    { name: 'test' },
+    { name: 'build' },
+  ],
+
+  // 简化提交流程，跳过不必要的步骤
+  skipQuestions: ['body', 'breaking', 'footer'],
+
+  // 提交信息长度限制
+  subjectLimit: 100,
+
+  // 自定义提示信息
+  messages: {
+    type: '选择提交类型:',
+    scope: '选择变更范围:',
+    subject: '请输入提交描述 (必填):',
+    confirmCommit: '确认提交以上信息?',
+  },
+
+  // 允许自定义作用域
+  allowCustomScopes: false,
+  allowBreakingChanges: false,
+};
+```
+
+### 4. 使用方式
+
+```json
+// package.json
+{
+  "scripts": {
+    "commit": "cz", // 启动交互式提交
+    "commitlint": "commitlint --from=HEAD~1", // 检查最近一次提交
+    "commitlint:all": "commitlint --from=origin/main" // 检查所有未推送的提交
+  }
+}
+```
+
+## 代码规范配置
+
+### 1. ESLint配置
+
+```js
+// .eslintrc.js
+module.exports = {
+  extends: [
+    "airbnb-typescript",
+    "plugin:react-hooks/recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:jest/recommended",
+    "prettier",
+    "plugin:prettier/recommended",
+  ],
+  plugins: [
+    "react",
+    "@typescript-eslint",
+    "jest",
+    "import",
+    "unused-imports",
+  ],
+  parser: "@typescript-eslint/parser",
+  env: {
+    browser: true,
+    es6: true,
+    jest: true,
+  },
+  parserOptions: {
+    ecmaFeatures: {
+      jsx: true,
+    },
+    ecmaVersion: 2018,
+    sourceType: "module",
+    project: "./tsconfig.eslint.json",
+  },
+  rules: {
+    // 自定义规则
+    "unused-imports/no-unused-imports": "error",
+    "@typescript-eslint/no-shadow": "off",
+    "unused-imports/no-unused-vars": [
+      "warn",
+      { 
+        "vars": "all", 
+        "varsIgnorePattern": "^_", 
+        "args": "after-used", 
+        "argsIgnorePattern": "^_" 
+      }
+    ],
+    // React相关规则
+    "react/react-in-jsx-scope": "off",
+    "react/prop-types": "off",
+    "react/jsx-props-no-spreading": "off",
+    "react/function-component-definition": "off",
+    // 导入相关规则
+    "import/no-cycle": "warn",
+    "import/prefer-default-export": "off",
+    // Web3相关规则
+    "no-undef": "off", // 允许window.ethereum等全局对象
+  },
+};
+```
+
+### 2. Prettier配置
+
+```js
+// prettier.config.js
+module.exports = {
+  semi: true,
+  trailingComma: 'es5',
+  singleQuote: true,
+  printWidth: 80,
+  tabWidth: 2,
+  useTabs: false,
+  bracketSpacing: true,
+  jsxBracketSameLine: false,
+  arrowParens: 'avoid',
+  proseWrap: 'preserve',
+};
+```
+
+## 最佳实践
+
+### 1. 提交规范最佳实践
+
+- 使用`pnpm commit`代替`git commit`，启动交互式提交
+- 提交类型和范围选择要准确
+- 提交描述简洁明了，不超过100字符
+- 重大变更或破坏性变更要在body中说明
+- 引用相关issue或PR编号
+
+**良好的提交示例**：
+```
+feat(wallet): 支持WalletConnect v2连接
+```
+
+```
+fix(contract): 修复ERC20转账金额计算错误
+```
+
+```
+web3(contract): 集成新的红包合约
+```
+
+### 2. 代码质量检查流程
+
+1. **开发阶段**：
+   - 使用ESLint和Prettier插件实时检查
+   - 定期运行`pnpm lint`和`pnpm format`
+
+2. **提交阶段**：
+   - pre-commit hook自动运行lint-staged
+   - 自动修复可修复的格式问题
+   - 检查不通过则阻止提交
+
+3. **推送阶段**：
+   - pre-push hook运行类型检查和单元测试
+   - 确保推送的代码质量合格
+
+4. **CI阶段**：
+   - 运行完整的代码检查
+   - 执行所有测试
+   - 生成代码覆盖率报告
+
+### 3. 团队协作规范
+
+- 新成员入职必须配置开发环境，确保hooks正常工作
+- 代码审查时关注代码规范和质量
+- 定期更新依赖包，保持工具链最新
+- 遇到规范冲突时，团队讨论并更新配置
+- 维护规范文档，记录团队约定
+
+### 4. Web3项目特殊规范
+
+- 敏感操作（如私钥处理）必须有明确的注释和审查流程
+- 合约地址和ABI必须集中管理，并有版本控制
+- 区块链交互必须有完善的错误处理
+- 交易金额计算必须使用BigNumber，避免精度问题
+- 涉及资产转移的代码必须有测试覆盖
+
+## 常见问题及解决方案
+
+### 1. Hooks不生效
+
+- 检查husky版本是否正确
+- 确保`prepare`脚本配置正确
+- 运行`pnpm install`重新安装依赖
+- 检查hook文件是否有执行权限
+
+### 2. 提交规范检查失败
+
+- 运行`pnpm commit`使用交互式提交
+- 检查提交信息格式是否符合规范
+- 运行`pnpm commitlint --from=HEAD~1`检查最近一次提交
+- 必要时使用`git commit --no-verify`跳过检查（不推荐）
+
+### 3. 性能问题
+
+- 优化lint-staged配置，只检查必要文件
+- 配置ESLint缓存，提高检查速度
+- 分离重量级检查到pre-push或CI阶段
+
+## 总结
+
+代码质量和规范是Web3项目成功的关键因素之一。通过Git Hooks、提交规范和代码规范的组合，可以构建一套完整的质量保障体系，确保项目的安全性、可靠性和可维护性。
+
+在实际开发中，我注重规范的实用性和灵活性，既要有严格的检查机制，也要避免过度约束影响开发效率。通过自动化工具和清晰的规范文档，可以让团队成员更容易遵守规范，提高协作效率。
+
+下一篇，我将分享Monorepo架构的实践经验，包括Lerna与pnpm的工作流配置和多包管理策略。

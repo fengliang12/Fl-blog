@@ -1,0 +1,354 @@
+---
+title: 深入Vue计算属性与侦听器：Computed和Watch原理解析
+date: '2022-05-19'
+tags: ['Vue', 'Computed', 'Watch']
+draft: false
+summary: 详解Vue计算属性的缓存机制、依赖收集，以及侦听器的实现原理
+---
+
+# 第四篇：Vue的Computed与Watch实现原理（响应式高级特性）
+
+## 一、Computed计算属性核心原理
+
+### 1. 计算属性的特性
+
+- **缓存机制**：依赖不变时不会重新计算
+- **懒执行**：只有被访问时才会计算
+- **依赖收集**：自动收集响应式依赖
+
+### 2. Computed初始化
+
+```javascript
+// state.js
+export function initState(vm) {
+  const opts = vm.$options
+  
+  if (opts.computed) {
+    initComputed(vm, opts.computed)
+  }
+  
+  if (opts.watch) {
+    initWatch(vm, opts.watch)
+  }
+}
+
+function initComputed(vm, computed) {
+  const watchers = vm._computedWatchers = Object.create(null)
+  
+  for (const key in computed) {
+    const userDef = computed[key]
+    const getter = typeof userDef === 'function' ? userDef : userDef.get
+    
+    // 创建计算属性Watcher
+    watchers[key] = new Watcher(vm, getter, () => {}, { lazy: true })
+    
+    // 定义计算属性到vm上
+    defineComputed(vm, key, userDef)
+  }
+}
+```
+
+### 3. 计算属性的缓存实现
+
+```javascript
+// observer/watcher.js
+class Watcher {
+  constructor(vm, exprOrFn, cb, options = {}) {
+    this.vm = vm
+    this.getter = exprOrFn
+    this.cb = cb
+    this.options = options
+    
+    // 计算属性特有：懒执行 + 缓存
+    this.lazy = !!options.lazy
+    this.dirty = this.lazy // 是否需要重新计算
+    
+    this.value = this.lazy ? undefined : this.get()
+  }
+  
+  // 计算属性求值
+  evaluate() {
+    this.value = this.get()
+    this.dirty = false // 标记为已计算
+  }
+  
+  // 依赖更新时标记为脏
+  update() {
+    if (this.lazy) {
+      this.dirty = true
+    } else {
+      queueWatcher(this)
+    }
+  }
+  
+  // 让计算属性的依赖也收集渲染Watcher
+  depend() {
+    let i = this.deps.length
+    while (i--) {
+      this.deps[i].depend()
+    }
+  }
+}
+```
+
+### 4. 计算属性的getter拦截
+
+```javascript
+// state.js
+function defineComputed(vm, key, userDef) {
+  const sharedPropertyDefinition = {
+    enumerable: true,
+    configurable: true,
+    get: () => {},
+    set: () => {}
+  }
+  
+  if (typeof userDef === 'function') {
+    sharedPropertyDefinition.get = createComputedGetter(key)
+  } else {
+    sharedPropertyDefinition.get = createComputedGetter(key)
+    sharedPropertyDefinition.set = userDef.set || (() => {})
+  }
+  
+  Object.defineProperty(vm, key, sharedPropertyDefinition)
+}
+
+function createComputedGetter(key) {
+  return function computedGetter() {
+    const watcher = this._computedWatchers[key]
+    if (watcher) {
+      // 需要重新计算
+      if (watcher.dirty) {
+        watcher.evaluate()
+      }
+      
+      // 依赖收集：让计算属性的依赖也收集渲染Watcher
+      if (Dep.target) {
+        watcher.depend()
+      }
+      
+      return watcher.value
+    }
+  }
+}
+```
+
+## 二、Watch侦听器实现原理
+
+### 1. Watch初始化
+
+```javascript
+function initWatch(vm, watch) {
+  for (const key in watch) {
+    const handler = watch[key]
+    
+    if (Array.isArray(handler)) {
+      handler.forEach(handle => {
+        createWatcher(vm, key, handle)
+      })
+    } else {
+      createWatcher(vm, key, handler)
+    }
+  }
+}
+
+function createWatcher(vm, exprOrFn, handler, options) {
+  if (typeof handler === 'object') {
+    options = handler
+    handler = handler.handler
+  }
+  
+  if (typeof handler === 'string') {
+    handler = vm[handler]
+  }
+  
+  return vm.$watch(exprOrFn, handler, options)
+}
+```
+
+### 2. $watch方法实现
+
+```javascript
+// state.js
+export function stateMixin(Vue) {
+  Vue.prototype.$watch = function(exprOrFn, cb, options = {}) {
+    const vm = this
+    options.user = true // 标记为用户Watcher
+    
+    const watcher = new Watcher(vm, exprOrFn, cb, options)
+    
+    // 立即执行
+    if (options.immediate) {
+      cb.call(vm, watcher.value)
+    }
+    
+    // 返回取消监听函数
+    return function unwatchFn() {
+      watcher.teardown()
+    }
+  }
+}
+```
+
+### 3. Watcher的路径解析
+
+```javascript
+// observer/watcher.js
+class Watcher {
+  constructor(vm, exprOrFn, cb, options = {}) {
+    // ...
+    
+    if (typeof exprOrFn === 'function') {
+      this.getter = exprOrFn
+    } else {
+      // 解析路径表达式，如'a.b.c'
+      this.getter = parsePath(exprOrFn)
+    }
+    
+    this.value = this.lazy ? undefined : this.get()
+  }
+}
+
+// 解析路径
+function parsePath(path) {
+  const segments = path.split('.')
+  
+  return function(obj) {
+    for (let i = 0; i < segments.length; i++) {
+      if (!obj) return
+      obj = obj[segments[i]]
+    }
+    return obj
+  }
+}
+```
+
+### 4. Watch的深度监听
+
+```javascript
+// observer/watcher.js
+class Watcher {
+  get() {
+    pushTarget(this)
+    let value
+    const vm = this.vm
+    
+    try {
+      value = this.getter.call(vm, vm)
+      
+      // 深度监听：递归遍历所有属性
+      if (this.options.deep) {
+        traverse(value)
+      }
+    } catch (e) {
+      throw e
+    } finally {
+      popTarget()
+    }
+    
+    return value
+  }
+}
+
+// 递归遍历值
+function traverse(value) {
+  if (typeof value !== 'object' || value === null) return
+  
+  Object.keys(value).forEach(key => {
+    traverse(value[key])
+  })
+}
+```
+
+## 三、Computed vs Watch对比
+
+| 特性 | Computed | Watch |
+|------|----------|-------|
+| **用途** | 计算衍生值 | 监听数据变化执行副作用 |
+| **缓存** | 有缓存，依赖不变不重新计算 | 无缓存，每次变化都执行 |
+| **返回值** | 有返回值 | 无返回值 |
+| **同步/异步** | 同步计算 | 支持异步操作 |
+| **使用场景** | 数据计算、格式化显示 | 数据变化后的异步操作、复杂逻辑 |
+
+### 实战示例对比
+
+```javascript
+// Computed示例
+new Vue({
+  data() {
+    return {
+      firstName: 'Zhang',
+      lastName: 'San'
+    }
+  },
+  computed: {
+    fullName() {
+      return `${this.firstName} ${this.lastName}`
+    }
+  }
+})
+
+// Watch示例
+new Vue({
+  data() {
+    return {
+      userId: 1
+    }
+  },
+  watch: {
+    userId(newVal) {
+      // 异步请求用户数据
+      fetchUser(newVal).then(user => {
+        this.user = user
+      })
+    }
+  }
+})
+```
+
+## 四、高级特性实现
+
+### 1. 计算属性的setter
+
+```javascript
+computed: {
+  fullName: {
+    get() {
+      return `${this.firstName} ${this.lastName}`
+    },
+    set(newVal) {
+      const [first, last] = newVal.split(' ')
+      this.firstName = first
+      this.lastName = last
+    }
+  }
+}
+```
+
+### 2. Watch的immediate和deep选项
+
+```javascript
+watch: {
+  user: {
+    handler(newVal) {
+      console.log('User changed:', newVal)
+    },
+    immediate: true, // 立即执行
+    deep: true // 深度监听
+  }
+}
+```
+
+## 五、总结
+
+Vue的响应式系统通过：
+1. **数据劫持**：监听数据变化
+2. **依赖收集**：记录数据使用位置
+3. **发布订阅**：数据变化时通知更新
+
+Computed和Watch作为响应式系统的高级特性：
+- Computed专注于**数据计算**和**缓存优化**
+- Watch专注于**数据监听**和**副作用处理**
+
+理解这些原理能帮助我们更好地使用Vue，写出更高效的代码！
+```

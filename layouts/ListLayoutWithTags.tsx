@@ -99,8 +99,8 @@ export default function ListLayoutWithTags({
           </h1>
         </div>
         <div className="flex sm:space-x-24">
-          <div className="hidden h-full max-h-screen max-w-[280px] min-w-[280px] flex-wrap overflow-auto pt-5 sm:flex">
-            <div className="cartoon-card mx-4 w-[248px] p-4">
+          <aside className="hidden max-h-[calc(100vh-10rem)] max-w-[280px] min-w-[280px] pt-5 lg:sticky lg:top-24 lg:block lg:self-start">
+            <div className="cartoon-card mx-4 max-h-[calc(100vh-10rem)] w-[248px] overflow-y-auto px-4 py-6">
               <div className="px-6 py-4">
                 {pathname.startsWith('/blog') ? (
                   <h3 className="text-primary-500 font-bold uppercase">全部文章</h3>
@@ -135,7 +135,7 @@ export default function ListLayoutWithTags({
                 </ul>
               </div>
             </div>
-          </div>
+          </aside>
           <div>
             <ul>
               {displayPosts.map((post) => {

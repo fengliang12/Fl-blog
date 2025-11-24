@@ -1,0 +1,536 @@
+---
+slug: "monorepo-architecture-practice"
+title: "项目的Monorepo架构实践：Lerna + pnpm工作流"
+date: "2025-11-04"
+tags: ["Monorepo", "Lerna", "前端架构"]
+summary: "使用Lerna + pnpm构建Monorepo架构的实践经验"
+---
+
+# 第八篇：Monorepo架构实践
+
+## Web3项目的Monorepo架构实践：Lerna + pnpm工作流
+
+随着Web3项目规模的扩大和功能的增多，代码的组织和管理变得越来越复杂。为了提高代码复用性、简化依赖管理和版本控制，我在项目中采用了Monorepo架构，结合Lerna和pnpm构建了一套高效的多包管理工作流。
+
+## 为什么选择Monorepo？
+
+### Web3项目的复杂需求
+
+Web3项目通常包含多个相关但独立的模块：
+
+- 核心业务逻辑
+- UI组件库
+- 自定义Hooks库
+- Web3工具函数
+- 合约ABI和类型定义
+- 示例应用
+
+这些模块既相互依赖，又需要独立发布和维护，Monorepo架构能够很好地满足这些需求。
+
+### Monorepo的核心优势
+
+- **代码复用**：不同包之间可以直接引用，避免重复代码
+- **依赖共享**：公共依赖只安装一次，节省磁盘空间
+- **版本管理**：统一的版本控制和发布流程
+- **原子提交**：相关变更可以在一个提交中完成
+- **跨包重构**：更容易进行跨多个包的重构
+- **统一配置**：共享构建、测试、lint等配置
+
+### 技术选型：Lerna + pnpm
+
+在众多Monorepo工具中，我选择了Lerna + pnpm的组合：
+
+- **pnpm**：提供高效的工作区支持和依赖管理
+- **Lerna**：专注于版本管理和发布流程
+- **Verdaccio**：本地npm仓库，用于开发测试
+
+相比其他组合（如Yarn Workspaces + Lerna、Turbo），这个组合的优势在于：
+
+- 配置简单，学习曲线平缓
+- 性能优秀，依赖安装速度快
+- 磁盘空间占用小
+- 对Web3项目的特殊依赖支持良好
+
+## 架构设计与配置
+
+### 1. 项目结构
+
+```
+fl-web3-interface/
+├── packages/                    # 子包目录
+│   ├── components/              # UI组件库
+│   │   ├── src/                 # 源代码
+│   │   ├── dist/                # 构建输出
+│   │   ├── package.json         # 包配置
+│   │   └── tsconfig.json        # TypeScript配置
+│   ├── hooks/                   # 自定义Hooks库
+│   │   ├── src/
+│   │   ├── dist/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   ├── utils/                   # 工具函数库
+│   │   ├── src/
+│   │   ├── dist/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   └── abi/                     # 合约ABI库
+│       ├── src/
+│       ├── package.json
+│       └── tsconfig.json
+├── apps/                        # 应用目录
+│   └── web/                     # 主应用
+│       ├── src/
+│       ├── public/
+│       ├── package.json
+│       └── tsconfig.json
+├── scripts/                     # 脚本目录
+│   └── direct-publish.js        # 发布脚本
+├── .npmrc                       # pnpm配置
+├── lerna.json                   # Lerna配置
+├── pnpm-workspace.yaml          # pnpm工作区配置
+└── package.json                 # 根项目配置
+```
+
+### 2. 核心配置文件
+
+#### pnpm-workspace.yaml
+
+```yaml
+# pnpm-workspace.yaml
+packages:
+  - 'packages/*'
+  - 'apps/*'
+```
+
+#### .npmrc
+
+```ini
+# .npmrc
+hoist=true
+hoist-pattern[]=*
+shamefully-hoist=true
+link-workspace-packages=true
+access=public
+```
+
+#### lerna.json
+
+```json
+{
+  "$schema": "node_modules/lerna/schemas/lerna-schema.json",
+  "version": "independent",
+  "npmClient": "pnpm",
+  "packages": ["packages/*", "apps/*"],
+  "command": {
+    "version": {
+      "conventionalCommits": true,
+      "message": "chore(release): publish",
+      "allowBranch": ["master", "main"],
+      "ignoreChanges": [
+        "**/*.md",
+        "**/*.test.js",
+        "**/*.spec.js",
+        "**/*-lock.json"
+      ]
+    },
+    "publish": {
+      "conventionalCommits": true,
+      "message": "chore(release): publish",
+      "ignoreChanges": ["**/*.md", "**/*.test.js"]
+    },
+    "bootstrap": {
+      "hoist": true
+    }
+  }
+}
+```
+
+#### 根package.json
+
+```json
+{
+  "name": "fl-web3-interface",
+  "version": "1.0.0",
+  "description": "Web3前端开发库",
+  "private": true,
+  "scripts": {
+    "build:packages": "lerna run build",
+    "clean:packages": "lerna clean --yes",
+    "publish:packages": "lerna publish",
+    "publish:direct": "node scripts/direct-publish.js",
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "lint": "lerna run lint",
+    "test": "lerna run test",
+    "type-check": "lerna run type-check"
+  },
+  "devDependencies": {
+    "lerna": "^8.2.3",
+    "pnpm": "^10.14.0",
+    "verdaccio": "^6.0.0"
+  }
+}
+```
+
+### 3. 子包配置示例
+
+#### packages/components/package.json
+
+```json
+{
+  "name": "@fl/components",
+  "version": "1.1.0",
+  "description": "FL UI组件库",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist/*", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fl/hooks": "workspace:^",
+    "@mui/material": "^7.2.0",
+    "@emotion/react": "^11.14.0",
+    "class-variance-authority": "^0.7.1"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-dom": "*"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "http://localhost:4873"
+  }
+}
+```
+
+#### packages/hooks/package.json
+
+```json
+{
+  "name": "@fl/hooks",
+  "version": "1.6.0",
+  "description": "FL自定义Hooks库",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist/*", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src --ext .ts,.tsx",
+    "test": "jest",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "immer": "^10.0.3"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "ethers": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "http://localhost:4873"
+  }
+}
+```
+
+## 工作流实践
+
+### 1. 开发流程
+
+#### 安装依赖
+
+```bash
+# 安装所有依赖
+pnpm install
+
+# 为特定包安装依赖
+pnpm add react --filter @fl/components
+
+# 安装工作区内部依赖
+pnpm add @fl/hooks --filter @fl/components
+
+# 安装开发依赖
+pnpm add -D typescript --filter @fl/utils
+```
+
+#### 开发命令
+
+```bash
+# 启动所有包的开发模式
+lerna run dev --parallel
+
+# 启动特定包的开发模式
+pnpm dev --filter @fl/components
+
+# 启动主应用
+pnpm dev --filter web
+```
+
+#### 构建与测试
+
+```bash
+# 构建所有包
+pnpm build:packages
+
+# 测试所有包
+pnpm test
+
+# 运行特定包的测试
+pnpm test --filter @fl/hooks
+
+# 运行lint检查
+pnpm lint
+```
+
+### 2. 版本管理与发布
+
+#### 版本更新
+
+```bash
+# 交互式更新版本
+lerna version
+
+# 手动指定版本类型
+lerna version patch   # 补丁版本 1.0.0 → 1.0.1
+lerna version minor   # 次版本 1.0.0 → 1.1.0
+lerna version major   # 主版本 1.0.0 → 2.0.0
+
+# 查看变更的包
+lerna changed
+```
+
+#### 发布流程
+
+```bash
+# 启动本地仓库（开发环境）
+npx verdaccio
+
+# 登录本地仓库
+npm adduser --registry http://localhost:4873
+
+# 发布所有变更的包
+pnpm publish:packages
+
+# 使用自定义脚本发布
+pnpm publish:direct
+
+# 发布特定包
+lerna publish --scope=@fl/components
+```
+
+#### 发布脚本示例
+
+```js
+// scripts/direct-publish.js
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+function exec(cmd, options = {}) {
+  console.log(`执行命令: ${cmd}`);
+  try {
+    return execSync(cmd, { stdio: 'inherit', ...options });
+  } catch (error) {
+    console.error(`命令执行失败: ${error.message}`);
+    return null;
+  }
+}
+
+// 提交当前更改
+console.log('提交当前更改...');
+const result = exec('git status --porcelain', { stdio: 'pipe' });
+if (result && result.toString().trim()) {
+  console.log('发现未提交的更改，正在提交...');
+  exec('git add .');
+  exec('git commit -m "chore: 发布前自动提交更改"');
+} else {
+  console.log('工作区干净，无需提交');
+}
+
+// 构建所有包
+console.log('构建所有包...');
+exec('pnpm run build:packages');
+
+// 获取包信息并发布
+const packagesDir = path.resolve(__dirname, '../packages');
+const packages = fs.readdirSync(packagesDir).filter(dir => {
+  return fs.statSync(path.join(packagesDir, dir)).isDirectory();
+});
+
+console.log('开始发布包...');
+packages.forEach(packageName => {
+  const packageDir = path.join(packagesDir, packageName);
+  const packageJsonPath = path.join(packageDir, 'package.json');
+
+  if (fs.existsSync(packageJsonPath)) {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    console.log(`发布包: ${packageJson.name}@${packageJson.version}`);
+
+    process.chdir(packageDir);
+    exec('npm publish --registry=http://localhost:4873 --access=public');
+  }
+});
+
+console.log('所有包发布完成!');
+```
+
+### 3. 依赖管理最佳实践
+
+#### 内部依赖引用
+
+在Monorepo中，包之间的依赖引用使用`workspace:`协议：
+
+```json
+{
+  "dependencies": {
+    "@fl/hooks": "workspace:^",
+    "@fl/utils": "workspace:^"
+  }
+}
+```
+
+#### 外部依赖管理
+
+- 公共依赖尽量提升到根目录
+- 使用`pnpm hoist`自动提升公共依赖
+- 版本冲突时使用`pnpm.overrides`强制统一版本
+
+```json
+// package.json
+{
+  "pnpm": {
+    "overrides": {
+      "react": "^19.1.1",
+      "ethers": "^5.7.2"
+    }
+  }
+}
+```
+
+#### 对等依赖处理
+
+Web3项目中，React、ethers等核心库通常作为对等依赖：
+
+```json
+{
+  "peerDependencies": {
+    "react": "*",
+    "react-dom": "*",
+    "ethers": "^5.7.2"
+  },
+  "peerDependenciesMeta": {
+    "ethers": {
+      "optional": true
+    }
+  }
+}
+```
+
+## Web3项目特殊考量
+
+### 1. 合约ABI管理
+
+将合约ABI集中管理在单独的包中：
+
+```
+packages/abi/
+├── src/
+│   ├── erc20.ts
+│   ├── redPacket.ts
+│   ├── index.ts
+│   └── types/
+├── package.json
+└── tsconfig.json
+```
+
+使用方式：
+
+```tsx
+import { ERC20_ABI, RED_PACKET_ABI } from '@fl/abi';
+import { useContract } from '@fl/hooks';
+
+const contract = useContract(address, RED_PACKET_ABI);
+```
+
+### 2. 多链支持
+
+在工具包中集中管理多链配置：
+
+```tsx
+// packages/utils/src/chains.ts
+export const SUPPORTED_CHAINS = {
+  MAINNET: {
+    chainId: 1,
+    name: 'Ethereum',
+    rpcUrl: 'https://mainnet.infura.io/v3/YOUR_KEY',
+    explorerUrl: 'https://etherscan.io',
+  },
+  SEPOLIA: {
+    chainId: 11155111,
+    name: 'Sepolia',
+    rpcUrl: 'https://sepolia.infura.io/v3/YOUR_KEY',
+    explorerUrl: 'https://sepolia.etherscan.io',
+  },
+  POLYGON: {
+    chainId: 137,
+    name: 'Polygon',
+    rpcUrl: 'https://polygon-rpc.com',
+    explorerUrl: 'https://polygonscan.com',
+  },
+};
+
+export const getChainInfo = (chainId: number) => {
+  return Object.values(SUPPORTED_CHAINS).find(chain => chain.chainId === chainId);
+};
+```
+
+### 3. 性能优化
+
+- 使用Tree-shaking减小包体积
+- 按需导出，避免不必要的依赖
+- 对Web3重依赖进行代码分割
+- 利用pnpm的依赖缓存提高安装速度
+
+## 常见问题及解决方案
+
+### 1. 包之间的循环依赖
+
+- 设计时避免循环依赖
+- 使用依赖注入模式
+- 将共享代码提取到独立的包
+
+### 2. 版本冲突
+
+- 使用`pnpm overrides`强制统一版本
+- 定期更新依赖包
+- 必要时使用`resolutions`字段
+
+### 3. 构建顺序问题
+
+- 使用Lerna的依赖排序功能
+- 配置`prebuild`脚本确保依赖先构建
+- 使用`lerna run build --sort`按依赖顺序构建
+
+### 4. 发布失败
+
+- 确保本地仓库服务正常运行
+- 检查包配置中的`publishConfig`
+- 验证用户权限
+- 清理npm缓存
+
+## 总结
+
+Monorepo架构为Web3项目提供了灵活、高效的代码组织方式。通过Lerna + pnpm的组合，可以很好地管理多个相关包，提高代码复用性和开发效率。
+
+在Web3项目中，Monorepo架构特别适合管理UI组件、自定义Hooks、工具函数和合约ABI等模块。通过合理的包设计和依赖管理，可以构建出结构清晰、易于维护、可扩展的项目架构。
+
+下一篇，我将分享CI/CD自动化流程的实践经验，包括GitHub Actions与Cloudflare部署的配置和最佳实践。

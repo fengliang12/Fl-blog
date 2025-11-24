@@ -1,0 +1,384 @@
+---
+title: 手撕Vue Router核心原理：从路由匹配到组件渲染全流程
+date: '2022-06-12'
+tags: ['Vue Router', '路由原理', 'Vue']
+draft: false
+summary: 一文搞懂Vue Router底层逻辑，从路由匹配、响应式更新到Router-View组件渲染的完整实现
+---
+
+## 前言：前端路由到底是什么？
+
+简单说，前端路由就是「路径 → 组件」的映射关系：用户访问不同URL，页面渲染对应的组件，全程不刷新页面。
+
+Vue Router作为Vue官方路由库，核心解决三个问题：
+1. **路由匹配**：URL对应哪个组件？
+2. **路径监听**：URL变化时如何响应？
+3. **组件渲染**：如何在页面上显示对应组件？
+
+
+## 一、Vue Router核心架构
+
+先看Vue Router的核心目录结构（我们自己实现的简化版）：
+```
+vue-router/
+├─ components/   # 核心组件：RouterLink、RouterView
+├─ history/      # 路由模式：Hash、History
+├─ create-matcher.js  # 路由匹配器
+├─ create-route-map.js# 路由映射表
+├─ install.js    # Vue插件安装逻辑
+└─ index.js      # 入口文件
+```
+
+
+## 二、第一步：实现Vue插件安装
+
+Vue插件必须提供`install`方法，Vue Router也不例外——它的核心是**把路由实例注入所有组件**。
+
+```javascript
+// vue-router/install.js
+export let _Vue;
+
+export default function install(Vue) {
+  _Vue = Vue;
+
+  // 全局混入：给所有组件加beforeCreate钩子
+  Vue.mixin({
+    beforeCreate() {
+      // 根组件：挂载router实例
+      if (this.$options.router) {
+        this._routerRoot = this; // 标记根组件
+        this._router = this.$options.router;
+        this._router.init(this); // 初始化路由
+
+        // 把路由状态变成响应式（关键！）
+        Vue.util.defineReactive(this, '_route', this._router.history.current);
+      } else {
+        // 子组件：继承父组件的_routerRoot
+        this._routerRoot = this.$parent?._routerRoot;
+      }
+    }
+  });
+
+  // 给Vue原型加$router/$route（方便组件使用）
+  Object.defineProperty(Vue.prototype, '$router', {
+    get() { return this._routerRoot._router; }
+  });
+  Object.defineProperty(Vue.prototype, '$route', {
+    get() { return this._routerRoot._route; }
+  });
+}
+```
+
+这段代码做了三件事：
+1. **根组件挂载**：把router实例存在根组件的`_router`上
+2. **响应式状态**：用`defineReactive`让路由状态变化能触发视图更新
+3. **全局注入**：所有组件都能通过`this.$router`/`this.$route`访问路由
+
+
+## 三、第二步：路由匹配核心逻辑
+
+路由匹配的本质是「把用户配置的routes转成可快速查找的映射表」。
+
+### 1. 构建路由映射表
+
+```javascript
+// vue-router/create-route-map.js
+export function createRouteMap(routes, oldPathList = [], oldPathMap = {}) {
+  routes.forEach(route => {
+    addRouteRecord(route, oldPathList, oldPathMap);
+  });
+  return { pathList: oldPathList, pathMap: oldPathMap };
+}
+
+// 递归处理嵌套路由
+function addRouteRecord(route, pathList, pathMap, parent = null) {
+  // 拼接父路径（处理嵌套路由）
+  const path = parent ? `${parent.path}/${route.path}` : route.path;
+  
+  const record = {
+    path,
+    component: route.component,
+    parent
+  };
+
+  // 避免重复添加
+  if (!pathMap[path]) {
+    pathList.push(path);
+    pathMap[path] = record;
+  }
+
+  // 递归处理子路由
+  if (route.children) {
+    route.children.forEach(child => {
+      addRouteRecord(child, pathList, pathMap, record);
+    });
+  }
+}
+```
+
+比如用户配置的嵌套路由：
+```javascript
+routes: [
+  { path: '/about', component: About, children: [{ path: 'a', component: A }] }
+]
+```
+会被转成：
+- `pathList`: `['/about', '/about/a']`
+- `pathMap`: `{ '/about': { ... }, '/about/a': { ... } }`
+
+
+### 2. 创建路由匹配器
+
+```javascript
+// vue-router/create-matcher.js
+import { createRouteMap } from './create-route-map';
+import { createRoute } from './history/base';
+
+export default function createMatcher(routes) {
+  // 生成路径列表和映射表
+  let { pathList, pathMap } = createRouteMap(routes);
+
+  // 动态添加路由
+  function addRoutes(newRoutes) {
+    createRouteMap(newRoutes, pathList, pathMap);
+  }
+
+  // 匹配路径：返回对应的路由记录
+  function match(location) {
+    const record = pathMap[location];
+    return createRoute(record, { path: location });
+  }
+
+  return { addRoutes, match };
+}
+```
+
+`match`方法的关键是返回**包含嵌套路由的匹配记录**（比如访问`/about/a`，会返回`/about`和`/about/a`的记录）。
+
+
+## 四、第三步：路由模式与路径监听
+
+前端路由有两种模式：Hash（`#`）和History（H5 API），我们以更简单的Hash模式为例。
+
+### 1. 路由基类（统一接口）
+
+```javascript
+// vue-router/history/base.js
+export const createRoute = (record, location) => {
+  // 收集所有嵌套路由的记录（比如/about/a会包含/about和/about/a）
+  const matched = [];
+  if (record) {
+    let temp = record;
+    while (temp) {
+      matched.unshift(temp);
+      temp = temp.parent;
+    }
+  }
+  return { ...location, matched };
+};
+
+export default class History {
+  constructor(router) {
+    this.router = router;
+    // 初始路由状态
+    this.current = createRoute(null, { path: '/' });
+    this.cb = null; // 状态变化的回调
+  }
+
+  // 核心跳转方法
+  transitionTo(location, onComplete) {
+    // 匹配路由
+    const route = this.router.match(location);
+
+    // 避免重复跳转
+    if (this.current.path === location && this.current.matched.length === route.matched.length) {
+      return;
+    }
+
+    // 执行前置钩子（后面讲）
+    this.runBeforeHooks(route, () => {
+      this.updateRoute(route);
+      onComplete && onComplete();
+    });
+  }
+
+  // 更新路由状态（触发响应式更新）
+  updateRoute(route) {
+    this.current = route;
+    this.cb && this.cb(route);
+  }
+
+  // 注册状态变化回调
+  listen(cb) {
+    this.cb = cb;
+  }
+}
+```
+
+
+### 2. Hash模式实现
+
+```javascript
+// vue-router/history/hash.js
+import History from './base';
+
+// 确保页面加载时有hash
+function ensureHash() {
+  if (!window.location.hash) {
+    window.location.hash = '/';
+  }
+}
+
+// 获取当前hash（去掉#）
+function getHash() {
+  return window.location.hash.slice(1);
+}
+
+export default class HashHistory extends History {
+  constructor(router) {
+    super(router);
+    ensureHash();
+  }
+
+  // 获取当前路径
+  getCurrentLocation() {
+    return getHash();
+  }
+
+  // 监听hash变化
+  setupListener() {
+    window.addEventListener('hashchange', () => {
+      this.transitionTo(getHash());
+    });
+  }
+}
+```
+
+
+## 五、第四步：核心组件实现
+
+Vue Router的两个核心组件：`RouterLink`（跳转链接）和`RouterView`（渲染组件）。
+
+### 1. RouterView组件
+
+```javascript
+// vue-router/components/router-view.js
+export default {
+  name: 'RouterView',
+  functional: true, // 函数式组件，性能更高
+  render(h, { parent, data }) {
+    // 标记当前是RouterView（用于嵌套路由深度计算）
+    data.routerView = true;
+
+    // 计算嵌套深度（比如/about/a对应2层）
+    let depth = 0;
+    let currentParent = parent;
+    while (currentParent) {
+      if (currentParent.$vnode?.data.routerView) {
+        depth++;
+      }
+      currentParent = currentParent.$parent;
+    }
+
+    // 获取对应深度的路由记录
+    const route = parent.$route;
+    const record = route.matched[depth];
+
+    // 没有记录则渲染空
+    if (!record) {
+      return h();
+    }
+
+    // 渲染对应的组件
+    return h(record.component, data);
+  }
+};
+```
+
+
+### 2. RouterLink组件
+
+```javascript
+// vue-router/components/router-link.js
+export default {
+  props: {
+    to: { type: String, required: true },
+    tag: { type: String, default: 'a' }
+  },
+  render(h) {
+    const tag = this.tag;
+    // 点击跳转逻辑
+    const handler = () => {
+      this.$router.push(this.to);
+    };
+    // 渲染标签（默认是a）
+    return h(tag, { on: { click: handler } }, this.$slots.default);
+  }
+};
+```
+
+
+## 六、最后一步：整合Vue Router类
+
+```javascript
+// vue-router/index.js
+import install from './install';
+import createMatcher from './create-matcher';
+import HashHistory from './history/hash';
+import RouterView from './components/router-view';
+import RouterLink from './components/router-link';
+
+export default class VueRouter {
+  constructor(options = {}) {
+    // 创建路由匹配器
+    this.matcher = createMatcher(options.routes || []);
+    // 初始化Hash模式
+    this.history = new HashHistory(this);
+    // 注册前置钩子
+    this.beforeHooks = [];
+  }
+
+  // 初始化：启动路由监听
+  init(app) {
+    const history = this.history;
+    // 跳转初始路径
+    history.transitionTo(history.getCurrentLocation(), () => {
+      history.setupListener(); // 启动hash监听
+    });
+    // 路由变化时更新响应式状态
+    history.listen(route => {
+      app._route = route;
+    });
+  }
+
+  // 路由匹配方法
+  match(location) {
+    return this.matcher.match(location);
+  }
+
+  // 前置守卫
+  beforeEach(fn) {
+    this.beforeHooks.push(fn);
+  }
+
+  // 跳转方法
+  push(location) {
+    this.history.transitionTo(location);
+  }
+}
+
+// 注册插件
+VueRouter.install = install;
+// 注册全局组件
+VueRouter.components = { RouterView, RouterLink };
+```
+
+
+## 总结：Vue Router核心流程
+
+1. **安装插件**：通过`install`把路由注入所有组件，创建响应式状态
+2. **初始化路由**：生成路由映射表，启动路径监听
+3. **路径变化**：hashchange事件触发`transitionTo`，匹配对应路由
+4. **更新状态**：`updateRoute`触发响应式更新，`RouterView`渲染对应组件
+
+这就是Vue Router的核心逻辑——本质是「响应式状态 + 路径监听 + 组件渲染」的组合。

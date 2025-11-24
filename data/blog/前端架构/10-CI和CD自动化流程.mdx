@@ -1,0 +1,542 @@
+---
+slug: "cicd-automation-flow"
+title: "项目的CI/CD自动化流程：GitHub Actions + Cloudflare部署实践"
+date: "2025-11-10"
+tags: ["CI/CD", "前端架构"]
+summary: "项目中构建CI/CD自动化流程的实践经验，包括GitHub Actions配置和Cloudflare部署"
+---
+
+# 第九篇：CI/CD自动化流程
+
+## Web3项目的CI/CD自动化流程：GitHub Actions + Cloudflare部署实践
+
+在Web3项目开发中，高效的CI/CD（持续集成/持续部署）流程至关重要。它不仅能确保代码质量，还能加速产品迭代，让开发团队更专注于核心功能开发。在我的项目中，我构建了一套基于GitHub Actions和Cloudflare的完整CI/CD流程，实现了从代码提交到生产部署的全自动化。
+
+## CI/CD流程设计思路
+
+### Web3项目的特殊需求
+
+Web3项目的CI/CD流程需要考虑一些特殊需求：
+
+- **安全性**：代码必须经过严格检查，避免安全漏洞
+- **兼容性**：需要测试不同钱包和网络环境
+- **可靠性**：智能合约交互必须稳定可靠
+- **可审计性**：部署记录需要完整可追溯
+- **环境隔离**：开发、测试、生产环境严格分离
+
+### 流程设计原则
+
+我设计的CI/CD流程遵循以下原则：
+
+- **自动化**：从代码检查到部署全流程自动化
+- **分层测试**：单元测试 → 集成测试 → E2E测试
+- **环境隔离**：不同环境使用不同的配置和资源
+- **快速反馈**：尽早发现并反馈问题
+- **可回滚**：部署失败时能够快速回滚
+- **安全合规**：符合Web3项目的安全要求
+
+### 技术栈选择
+
+经过对比评估，我选择了以下技术栈：
+
+- **GitHub Actions**：自动化工作流引擎，与GitHub无缝集成
+- **Cloudflare Pages**：静态网站部署平台，全球CDN加速
+- **pnpm**：高效的包管理器，加速依赖安装
+- **Jest**：单元测试框架
+- **Cypress**：E2E测试框架
+- **ESLint**：代码质量检查工具
+
+## 完整CI/CD流程设计
+
+### 1. 流程概览
+
+```
+代码提交 → 触发CI流程 → 代码质量检查 → 单元测试 → 构建 → E2E测试 → 部署
+```
+
+具体流程：
+
+1. **开发阶段**：开发者在feature分支开发功能
+2. **提交阶段**：提交代码时触发pre-commit钩子进行本地检查
+3. **PR阶段**：创建PR到develop分支，触发完整CI流程
+4. **合并阶段**：PR审核通过后合并到develop分支
+5. **测试部署**：自动部署到测试环境
+6. **生产部署**：合并到main分支后，自动部署到生产环境
+
+### 2. 分支策略
+
+采用Git Flow简化版分支策略：
+
+- **main**：生产环境分支，保持随时可部署状态
+- **develop**：开发环境分支，集成所有功能
+- **feature/*]**：功能分支，从develop分支创建
+- **hotfix/*]**：紧急修复分支，从main分支创建
+
+## GitHub Actions配置
+
+### 1. 核心配置文件
+
+```yaml
+# .github/workflows/ci.yml
+name: CI Pipeline
+
+# 触发条件
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+# 并发控制
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 任务定义
+jobs:
+  # 代码质量检查
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        
+      - name: Run ESLint
+        run: pnpm run lint
+        
+      - name: Run Prettier check
+        run: pnpm run format:check
+
+  # 类型检查
+  type-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        
+      - name: Run type check
+        run: pnpm run type-check
+
+  # 单元测试
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: type-check
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        
+      - name: Run unit tests
+        run: pnpm run test:unit:ci
+        
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage/lcov.info
+          fail_ci_if_error: true
+
+  # E2E测试
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        
+      - name: Install Cypress binary
+        run: npx cypress install
+        
+      - name: Start development server
+        run: pnpm run dev &
+        env:
+          CI: true
+          REACT_APP_NETWORK: sepolia
+          REACT_APP_INFURA_KEY: ${{ secrets.INFURA_KEY }}
+          
+      - name: Wait for server to be ready
+        run: npx wait-on http://localhost:3000 --timeout 60000
+        
+      - name: Run E2E tests
+        run: pnpm run test:e2e:ci
+        env:
+          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          
+      - name: Upload Cypress screenshots and videos
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cypress-artifacts
+          path: |
+            cypress/screenshots
+            cypress/videos
+
+  # 构建
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint, test, e2e]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+        
+      - name: Build for production
+        run: pnpm run build
+        env:
+          NODE_ENV: production
+          REACT_APP_NETWORK: mainnet
+          REACT_APP_INFURA_KEY: ${{ secrets.INFURA_KEY }}
+          REACT_APP_WALLET_CONNECT_PROJECT_ID: ${{ secrets.WALLET_CONNECT_PROJECT_ID }}
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+
+  # 部署到Cloudflare Pages（仅main分支）
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+          
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: ${{ secrets.CLOUDFLARE_PROJECT_NAME }}
+          directory: dist/
+          branch: main
+```
+
+### 2. 环境变量管理
+
+敏感信息通过GitHub Secrets管理：
+
+- `INFURA_KEY`：Infura API密钥
+- `WALLET_CONNECT_PROJECT_ID`：WalletConnect项目ID
+- `CLOUDFLARE_API_TOKEN`：Cloudflare API令牌
+- `CLOUDFLARE_ACCOUNT_ID`：Cloudflare账户ID
+- `CLOUDFLARE_PROJECT_NAME`：Cloudflare项目名称
+- `CYPRESS_RECORD_KEY`：Cypress记录密钥
+
+### 3. 部署配置
+
+Cloudflare Pages配置文件：
+
+```jsonc
+// wrangler.jsonc
+{
+  "name": "fl-web3-interface",
+  "compatibility_date": "2025-09-23",
+  "build": {
+    "command": "pnpm run build"
+  },
+  "assets": {
+    "directory": "./dist"
+  },
+  "env": {
+    "REACT_APP_NETWORK": "mainnet",
+    "REACT_APP_INFURA_KEY": "${INFURA_KEY}"
+  }
+}
+```
+
+## 测试自动化配置
+
+### 1. 单元测试CI配置
+
+```javascript
+// jest.config.js
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'jsdom',
+  setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'],
+  testMatch: [
+    '<rootDir>/src/**/__tests__/**/*.{ts,tsx}',
+    '<rootDir>/src/**/*.{test,spec}.{ts,tsx}'
+  ],
+  collectCoverageFrom: [
+    'src/**/*.{ts,tsx}',
+    '!src/**/*.d.ts',
+    '!src/index.tsx'
+  ],
+  coverageThreshold: {
+    global: {
+      branches: 70,
+      functions: 70,
+      lines: 70,
+      statements: 70
+    }
+  },
+  coverageReporters: ['text', 'lcov', 'clover']
+};
+```
+
+### 2. E2E测试CI配置
+
+```ts
+// cypress.config.ts
+import { defineConfig } from 'cypress';
+
+export default defineConfig({
+  e2e: {
+    baseUrl: 'http://localhost:3000',
+    supportFile: 'cypress/support/e2e.ts',
+    specPattern: 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}',
+    video: true,
+    screenshotOnRunFailure: true,
+    viewportWidth: 1280,
+    viewportHeight: 720,
+    defaultCommandTimeout: 10000,
+    requestTimeout: 10000,
+    responseTimeout: 10000,
+    retries: {
+      runMode: 2,
+      openMode: 0
+    },
+    reporter: 'junit',
+    reporterOptions: {
+      mochaFile: 'cypress/reports/junit-[hash].xml'
+    }
+  }
+});
+```
+
+## Web3项目特殊配置
+
+### 1. 区块链测试环境
+
+在CI中使用测试网进行E2E测试：
+
+```ts
+// cypress/support/e2e.ts
+import './commands';
+
+// 配置测试网环境
+beforeEach(() => {
+  cy.visit('/', {
+    onBeforeLoad: (win) => {
+      // 模拟测试网配置
+      win.env = {
+        ...win.env,
+        REACT_APP_NETWORK: 'sepolia',
+      };
+    },
+  });
+  
+  // 模拟钱包连接
+  cy.mockWallet({
+    address: '0x742d35Cc6634C0532925a3b8D4C9db96590c6C87',
+    chainId: '0xaa36a7', // Sepolia测试网
+    balance: '0x1bc16d674ec80000', // 2 ETH
+  });
+});
+```
+
+### 2. 合约交互测试
+
+使用测试网合约进行自动化测试：
+
+```ts
+// cypress/e2e/contract-interaction.cy.ts
+describe('合约交互测试', () => {
+  beforeEach(() => {
+    cy.visit('/');
+    cy.mockWallet();
+    cy.connectWallet();
+  });
+
+  it('应该能够调用合约方法', () => {
+    // 导航到合约交互页面
+    cy.get('[data-testid="contract-interaction-link"]').click();
+    
+    // 选择测试合约
+    cy.get('[data-testid="contract-select"]').select('RedPacket');
+    
+    // 调用合约方法
+    cy.get('[data-testid="call-method-button"]').click();
+    
+    // 验证结果
+    cy.get('[data-testid="method-result"]').should('be.visible');
+    cy.get('[data-testid="method-result"]').should('not.contain', '错误');
+  });
+
+  it('应该能够发送交易', () => {
+    // 导航到发送交易页面
+    cy.get('[data-testid="send-transaction-link"]').click();
+    
+    // 填写交易信息
+    cy.get('[data-testid="recipient-input"]').type('0x742d35Cc6634C0532925a3b8D4C9db96590c6C87');
+    cy.get('[data-testid="amount-input"]').type('0.01');
+    
+    // 发送交易
+    cy.get('[data-testid="send-button"]').click();
+    
+    // 模拟交易确认
+    cy.window().then((win) => {
+      win.ethereum.request.withArgs({ method: 'eth_sendTransaction' })
+        .resolves('0x' + Math.random().toString(16).substr(2, 64));
+    });
+    
+    // 验证交易成功
+    cy.get('[data-testid="transaction-success"]').should('be.visible');
+    cy.get('[data-testid="transaction-hash"]').should('be.visible');
+  });
+});
+```
+
+## 最佳实践
+
+### 1. CI/CD性能优化
+
+- **缓存依赖**：使用GitHub Actions缓存pnpm依赖
+- **并行执行**：并行运行lint、type-check等任务
+- **分步执行**：按依赖顺序执行任务
+- **选择性执行**：只在相关代码变更时运行对应测试
+- **超时控制**：为每个任务设置合理的超时时间
+
+### 2. 测试策略优化
+
+- **测试分层**：单元测试覆盖核心逻辑，E2E测试覆盖关键流程
+- **测试数据**：使用测试网和测试账户
+- **模拟环境**：在CI中模拟钱包和区块链环境
+- **测试报告**：生成详细的测试报告和覆盖率报告
+- **失败处理**：上传失败时的截图和视频，便于调试
+
+### 3. 部署策略优化
+
+- **环境隔离**：开发、测试、生产环境严格分离
+- **蓝绿部署**：使用Cloudflare的蓝绿部署功能
+- **回滚机制**：部署失败时自动回滚到上一版本
+- **监控告警**：配置部署成功和失败的通知
+- **访问控制**：测试环境添加访问控制
+
+### 4. Web3特殊最佳实践
+
+- **安全检查**：在CI中运行安全扫描工具
+- **合约验证**：自动验证合约部署
+- **多链部署**：支持多链部署和测试
+- **Gas优化**：监控和优化Gas使用
+- **隐私保护**：避免在CI日志中泄露敏感信息
+
+## 常见问题及解决方案
+
+### 1. 测试不稳定
+
+- 增加测试超时时间
+- 使用重试机制
+- 优化测试顺序
+- 模拟网络延迟
+
+### 2. 部署失败
+
+- 检查环境变量配置
+- 验证构建产物
+- 检查Cloudflare配置
+- 查看部署日志
+
+### 3. 性能问题
+
+- 优化构建流程
+- 启用增量构建
+- 压缩静态资源
+- 配置CDN缓存策略
+
+## 总结
+
+CI/CD自动化流程是Web3项目开发的重要基础设施。通过GitHub Actions和Cloudflare的组合，可以构建出高效、可靠、安全的自动化流程，确保代码质量和部署稳定性。
+
+在Web3项目中，CI/CD流程需要特别关注安全性、兼容性和可靠性。通过合理的流程设计、完善的测试策略和严格的部署控制，可以显著提升开发效率，降低发布风险，为用户提供稳定可靠的Web3应用体验。
+
+下一篇，我将对整个Web3前端开发系列进行总结，分享项目开发的经验教训和未来展望。

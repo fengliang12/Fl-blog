@@ -1,0 +1,263 @@
+---
+slug: "react-core-architecture-setup"
+title: "项目中的React核心架构搭建实践"
+date: "2025-10-03"
+tags: ["前端架构"]
+summary: "搭建React核心架构的经验和最佳实践"
+---
+
+# 第二篇：React核心架构搭建
+
+## Web3项目中的React核心架构搭建实践
+
+在确定技术栈后，接下来就是搭建React应用的核心架构。对于Web3应用来说，架构设计需要特别考虑钱包连接状态、区块链数据获取和状态管理等方面。
+
+## 项目结构设计
+
+我采用了功能模块化的项目结构：
+
+```
+src/
+├── components/          # 通用UI组件
+├── contexts/            # React上下文
+├── connectors/          # 钱包连接器
+├── hooks/               # 自定义Hooks
+├── pages/               # 页面组件
+├── services/            # 数据服务
+├── utils/               # 工具函数
+├── constants/           # 常量定义
+├── types/               # 类型定义
+├── App.tsx              # 应用入口组件
+└── index.tsx            # 渲染入口
+```
+
+## 入口文件配置
+
+```tsx
+// src/index.tsx
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './tailwind.css';
+import './index.css';
+
+// 创建根节点并渲染应用
+const root = ReactDOM.createRoot(document.getElementById('app') as HTMLElement);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+```
+
+## 路由配置
+
+使用React Router v7进行路由管理：
+
+```tsx
+// src/App.tsx
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import WalletProvider from './contexts/WalletContext';
+
+// 页面组件
+import Home from './pages/Home';
+import Dashboard from './pages/Dashboard';
+import Transaction from './pages/Transaction';
+import NotFound from './pages/NotFound';
+
+// 创建MUI主题
+const theme = createTheme({
+  palette: {
+    primary: {
+      main: '#3b82f6', // 蓝色主题，适合金融类Web3应用
+    },
+    background: {
+      default: '#f8fafc',
+    },
+  },
+  typography: {
+    fontFamily: 'Inter, system-ui, sans-serif',
+  },
+});
+
+function App() {
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <WalletProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/transaction/:id" element={<Transaction />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </WalletProvider>
+    </ThemeProvider>
+  );
+}
+
+export default App;
+```
+
+## 状态管理方案
+
+对于Web3应用，我选择了两种状态管理方案结合使用：
+
+### 1. Jotai用于原子化状态
+
+```tsx
+// src/store/atoms.ts
+import { atom } from 'jotai';
+import { atomWithStorage } from 'jotai/utils';
+
+// 钱包连接状态
+export const walletConnectedAtom = atom(false);
+export const currentAccountAtom = atom('');
+export const currentChainIdAtom = atom(1);
+
+// 用户偏好设置（持久化）
+export const themeModeAtom = atomWithStorage('themeMode', 'light');
+export const recentWalletsAtom = atomWithStorage('recentWallets', []);
+```
+
+### 2. React Context用于全局状态
+
+```tsx
+// src/contexts/WalletContext.tsx
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useWeb3React } from '@web3-react/core';
+import { ethers } from 'ethers';
+import { metaMask } from '../connectors/metaMask';
+
+interface WalletContextType {
+  account: string | null;
+  balance: string;
+  connect: () => Promise<void>;
+  disconnect: () => Promise<void>;
+  isLoading: boolean;
+}
+
+const WalletContext = createContext<WalletContextType | undefined>(undefined);
+
+export const WalletProvider = ({ children }: { children: ReactNode }) => {
+  const { account, chainId, active } = useWeb3React();
+  const [balance, setBalance] = useState('0');
+  const [isLoading, setIsLoading] = useState(false);
+
+  // 获取账户余额
+  useEffect(() => {
+    const fetchBalance = async () => {
+      if (account) {
+        try {
+          const provider = new ethers.providers.Web3Provider(window.ethereum);
+          const balance = await provider.getBalance(account);
+          setBalance(ethers.utils.formatEther(balance));
+        } catch (error) {
+          console.error('Failed to fetch balance:', error);
+        }
+      }
+    };
+
+    fetchBalance();
+  }, [account]);
+
+  // 连接钱包
+  const connect = async () => {
+    setIsLoading(true);
+    try {
+      await metaMask.activate();
+    } catch (error) {
+      console.error('Failed to connect:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 断开连接
+  const disconnect = async () => {
+    setIsLoading(true);
+    try {
+      await metaMask.deactivate();
+    } catch (error) {
+      console.error('Failed to disconnect:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <WalletContext.Provider
+      value={{
+        account,
+        balance,
+        connect,
+        disconnect,
+        isLoading,
+      }}
+    >
+      {children}
+    </WalletContext.Provider>
+  );
+};
+
+export const useWallet = () => {
+  const context = useContext(WalletContext);
+  if (context === undefined) {
+    throw new Error('useWallet must be used within a WalletProvider');
+  }
+  return context;
+};
+```
+
+## 自定义Hooks设计
+
+为了提高代码复用性，我设计了一系列自定义Hooks：
+
+```tsx
+// src/hooks/useContract.ts
+import { useMemo } from 'react';
+import { useWeb3React } from '@web3-react/core';
+import { ethers } from 'ethers';
+import ERC20ABI from '../abis/ERC20.json';
+
+export const useContract = (address: string, abi: any) => {
+  const { library, account } = useWeb3React();
+
+  const contract = useMemo(() => {
+    if (!address || !abi || !library) return null;
+    return new ethers.Contract(address, abi, library.getSigner(account));
+  }, [address, abi, library, account]);
+
+  return contract;
+};
+
+export const useERC20Contract = (address: string) => {
+  return useContract(address, ERC20ABI);
+};
+```
+
+## 架构设计思考
+
+在设计React架构时，我主要考虑了以下几点：
+
+1. **状态分层管理**：UI状态与Web3状态分离
+2. **数据获取策略**：区块链数据的缓存和更新机制
+3. **错误处理**：钱包连接失败、合约交互异常等情况的处理
+4. **性能优化**：避免不必要的重渲染和区块链请求
+5. **类型安全**：完整的TypeScript类型定义
+
+## 遇到的挑战
+
+1. **钱包连接状态同步**：多钱包连接时的状态管理
+2. **异步操作处理**：区块链交互的异步特性需要特别处理
+3. **Provider注入时机**：确保Web3 Provider正确注入
+
+## 总结
+
+React核心架构的搭建是Web3项目的基础，合理的架构设计能够显著提升开发效率和用户体验。在实际开发中，我倾向于采用简洁而不简单的架构，避免过度设计，同时确保代码的可维护性和扩展性。
+
+下一篇，我将分享样式解决方案的集成经验，包括Tailwind CSS与Material-UI的协同使用。

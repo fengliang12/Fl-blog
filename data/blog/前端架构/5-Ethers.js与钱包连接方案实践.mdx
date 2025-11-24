@@ -1,0 +1,684 @@
+---
+slug: "web3-tech-stack-integration"
+title: "技术栈整合：Ethers.js与钱包连接方案实践"
+date: "2025-10-09"
+tags: ["前端架构", "Ethers.js"]
+summary: "整合Ethers.js和钱包连接方案的实践经验"
+---
+
+# 第四篇：Web3技术栈整合
+## Web3技术栈整合：Ethers.js与钱包连接方案实践
+
+Web3前端开发的核心在于与区块链的交互，这包括钱包连接、合约调用和交易处理等关键功能。在我的项目中，我选择了Ethers.js作为以太坊交互库，并结合Web3-React实现钱包连接管理，形成了一套完整的Web3技术栈解决方案。
+
+## 技术选型思考
+
+### 为什么选择Ethers.js？
+
+在Web3开发中，有两个主要的以太坊交互库：Web3.js和Ethers.js。我选择Ethers.js主要基于以下考虑：
+
+- **模块化设计**：核心功能与插件分离，减小打包体积
+- **类型安全**：TypeScript支持更完善
+- **安全性**：内置的安全特性，如防止重放攻击
+- **API设计**：更符合现代JavaScript习惯
+- **维护活跃度**：开发团队更新频繁，问题修复及时
+
+### 钱包连接方案选择
+
+对于钱包连接管理，我选择了Web3-React库：
+
+- **多钱包支持**：支持MetaMask、WalletConnect等主流钱包
+- **React集成**：专为React设计的API
+- **状态管理**：内置的连接状态管理
+- **类型支持**：完善的TypeScript类型定义
+
+## 核心配置
+
+### 1. 安装依赖
+
+```bash
+# Ethers.js核心库
+pnpm add ethers@5.7.2
+
+# Web3-React相关
+pnpm add @web3-react/core@8.2.3 @web3-react/types@8.2.3
+pnpm add @web3-react/metamask@8.2.4 @web3-react/walletconnect-v2@8.5.6
+```
+
+### 2. 钱包连接器配置
+
+首先创建MetaMask连接器：
+
+```tsx
+// src/connectors/metaMask.ts
+import { MetaMask } from '@web3-react/metamask';
+import { initializeConnector } from '@web3-react/core';
+
+// 初始化MetaMask连接器
+export const [metaMask, hooks] = initializeConnector<MetaMask>(
+  actions => new MetaMask({ actions }),
+);
+
+// 支持的链ID配置
+export const SUPPORTED_CHAIN_IDS = {
+  MAINNET: 1,
+  GOERLI: 5,
+  SEPOLIA: 11155111,
+  POLYGON: 137,
+  MUMBAI: 80001,
+};
+
+// 链配置信息
+export const CHAIN_INFO = {
+  [SUPPORTED_CHAIN_IDS.MAINNET]: {
+    name: 'Ethereum',
+    currency: 'ETH',
+    explorerUrl: 'https://etherscan.io',
+    rpcUrl: 'https://mainnet.infura.io/v3/YOUR_INFURA_KEY',
+  },
+  [SUPPORTED_CHAIN_IDS.SEPOLIA]: {
+    name: 'Sepolia',
+    currency: 'ETH',
+    explorerUrl: 'https://sepolia.etherscan.io',
+    rpcUrl: 'https://sepolia.infura.io/v3/YOUR_INFURA_KEY',
+  },
+  [SUPPORTED_CHAIN_IDS.POLYGON]: {
+    name: 'Polygon',
+    currency: 'MATIC',
+    explorerUrl: 'https://polygonscan.com',
+    rpcUrl: 'https://polygon-rpc.com',
+  },
+};
+```
+
+然后配置WalletConnect：
+
+```tsx
+// src/connectors/walletConnect.ts
+import { WalletConnect as WalletConnectV2 } from '@web3-react/walletconnect-v2';
+import { initializeConnector } from '@web3-react/core';
+import { SUPPORTED_CHAIN_IDS } from './metaMask';
+
+// 初始化WalletConnect连接器
+export const [walletConnect, hooks] = initializeConnector<WalletConnectV2>(
+  actions =>
+    new WalletConnectV2({
+      actions,
+      options: {
+        projectId: 'YOUR_WALLET_CONNECT_PROJECT_ID',
+        chains: Object.values(SUPPORTED_CHAIN_IDS),
+        showQrModal: true,
+        metadata: {
+          name: 'FL Web3 Interface',
+          description: 'Web3应用示例',
+          url: 'https://your-app-url.com',
+          icons: ['https://your-app-url.com/icon.png'],
+        },
+      },
+    }),
+);
+```
+
+### 3. Web3 Provider配置
+
+创建Web3 Provider组件，为整个应用提供Web3上下文：
+
+```tsx
+// src/providers/Web3Provider.tsx
+import { Web3ReactProvider, createWeb3ReactRoot } from '@web3-react/core';
+import { ReactNode, useMemo } from 'react';
+import { ethers } from 'ethers';
+
+// 创建自定义的Web3React根
+const Web3ProviderNetwork = createWeb3ReactRoot('NETWORK');
+
+// 获取Ethers.js Provider
+function getLibrary(provider: any): ethers.providers.Web3Provider {
+  const library = new ethers.providers.Web3Provider(provider);
+  library.pollingInterval = 12000; // 设置轮询间隔
+  return library;
+}
+
+interface Web3ProviderProps {
+  children: ReactNode;
+}
+
+export const Web3Provider = ({ children }: Web3ProviderProps) => {
+  // 为网络连接创建provider
+  const networkLibrary = useMemo(
+    () => new ethers.providers.JsonRpcProvider('https://mainnet.infura.io/v3/YOUR_INFURA_KEY'),
+    []
+  );
+
+  return (
+    <Web3ReactProvider getLibrary={getLibrary}>
+      <Web3ProviderNetwork getLibrary={() => networkLibrary}>
+        {children}
+      </Web3ProviderNetwork>
+    </Web3ReactProvider>
+  );
+};
+```
+
+## 核心功能实现
+
+### 1. 钱包连接组件
+
+```tsx
+// src/components/WalletConnector.tsx
+import { useState } from 'react';
+import { Button, Menu, MenuItem, Typography, Box } from '@mui/material';
+import { AccountBalanceWallet, ExpandMore } from '@mui/icons-material';
+import { useWeb3React } from '@web3-react/core';
+import { metaMask } from '../connectors/metaMask';
+import { walletConnect } from '../connectors/walletConnect';
+import { formatAddress } from '../utils/web3';
+
+const WalletConnector = () => {
+  const { account, active, deactivate } = useWeb3React();
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+
+  const handleClick = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
+  // 连接MetaMask
+  const connectMetaMask = async () => {
+    try {
+      await metaMask.activate();
+    } catch (error) {
+      console.error('Failed to connect MetaMask:', error);
+    } finally {
+      handleClose();
+    }
+  };
+
+  // 连接WalletConnect
+  const connectWalletConnect = async () => {
+    try {
+      await walletConnect.activate();
+    } catch (error) {
+      console.error('Failed to connect WalletConnect:', error);
+    } finally {
+      handleClose();
+    }
+  };
+
+  // 断开连接
+  const handleDisconnect = () => {
+    if (active) {
+      deactivate();
+    }
+    handleClose();
+  };
+
+  return (
+    <>
+      {!active ? (
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<AccountBalanceWallet />}
+          endIcon={<ExpandMore />}
+          onClick={handleClick}
+          className="btn-primary"
+        >
+          连接钱包
+        </Button>
+      ) : (
+        <Button
+          variant="outlined"
+          onClick={handleClick}
+          className="border-primary-500 text-primary-500"
+        >
+          {formatAddress(account)}
+          <ExpandMore className="ml-1" />
+        </Button>
+      )}
+
+      <Menu
+        anchorEl={anchorEl}
+        open={Boolean(anchorEl)}
+        onClose={handleClose}
+        anchorOrigin={{
+          vertical: 'bottom',
+          horizontal: 'right',
+        }}
+        transformOrigin={{
+          vertical: 'top',
+          horizontal: 'right',
+        }}
+      >
+        {!active ? (
+          <>
+            <MenuItem onClick={connectMetaMask}>
+              <Box className="flex items-center">
+                <img 
+                  src="/metamask-icon.png" 
+                  alt="MetaMask" 
+                  className="w-5 h-5 mr-2" 
+                />
+                <Typography>MetaMask</Typography>
+              </Box>
+            </MenuItem>
+            <MenuItem onClick={connectWalletConnect}>
+              <Box className="flex items-center">
+                <img 
+                  src="/walletconnect-icon.png" 
+                  alt="WalletConnect" 
+                  className="w-5 h-5 mr-2" 
+                />
+                <Typography>WalletConnect</Typography>
+              </Box>
+            </MenuItem>
+          </>
+        ) : (
+          <>
+            <MenuItem disabled>
+              <Typography variant="body2" className="text-neutral-500">
+                当前账户
+              </Typography>
+              <Typography className="font-mono text-sm">
+                {formatAddress(account)}
+              </Typography>
+            </MenuItem>
+            <MenuItem onClick={handleDisconnect} className="text-red-500">
+              断开连接
+            </MenuItem>
+          </>
+        )}
+      </Menu>
+    </>
+  );
+};
+
+export default WalletConnector;
+```
+
+### 2. 合约交互Hook
+
+```tsx
+// src/hooks/useContract.ts
+import { useMemo } from 'react';
+import { useWeb3React } from '@web3-react/core';
+import { ethers } from 'ethers';
+import ERC20_ABI from '../abis/ERC20.json';
+import RED_PACKET_ABI from '../abis/RedPacket.json';
+
+// 合约地址配置
+const CONTRACT_ADDRESSES = {
+  [1]: { // 主网
+    redPacket: '0xYourMainnetContractAddress',
+  },
+  [11155111]: { // Sepolia测试网
+    redPacket: '0xYourSepoliaContractAddress',
+    testToken: '0xTestTokenAddress',
+  },
+};
+
+// 通用合约Hook
+export const useContract = (address: string, abi: any, withSignerIfPossible = true) => {
+  const { library, account } = useWeb3React();
+
+  return useMemo(() => {
+    if (!address || !abi || !library) return null;
+    
+    try {
+      return withSignerIfPossible && account 
+        ? new ethers.Contract(address, abi, library.getSigner(account))
+        : new ethers.Contract(address, abi, library);
+    } catch (error) {
+      console.error('Failed to get contract:', error);
+      return null;
+    }
+  }, [address, abi, library, account, withSignerIfPossible]);
+};
+
+// ERC20代币合约Hook
+export const useERC20Contract = (tokenAddress: string, withSignerIfPossible = true) => {
+  return useContract(tokenAddress, ERC20_ABI, withSignerIfPossible);
+};
+
+// 红包合约Hook
+export const useRedPacketContract = (chainId: number | undefined, withSignerIfPossible = true) => {
+  const address = chainId ? CONTRACT_ADDRESSES[chainId]?.redPacket : undefined;
+  return useContract(address || '', RED_PACKET_ABI, withSignerIfPossible);
+};
+
+// 测试代币合约Hook
+export const useTestTokenContract = (chainId: number | undefined, withSignerIfPossible = true) => {
+  const address = chainId ? CONTRACT_ADDRESSES[chainId]?.testToken : undefined;
+  return useContract(address || '', ERC20_ABI, withSignerIfPossible);
+};
+```
+
+### 3. 交易处理Hook
+
+```tsx
+// src/hooks/useTransaction.ts
+import { useState, useCallback } from 'react';
+import { ethers } from 'ethers';
+import { useWeb3React } from '@web3-react/core';
+
+type TransactionStatus = 'idle' | 'pending' | 'success' | 'failed';
+
+export const useTransaction = () => {
+  const { library, account } = useWeb3React();
+  const [status, setStatus] = useState<TransactionStatus>('idle');
+  const [txHash, setTxHash] = useState<string>('');
+  const [error, setError] = useState<Error | null>(null);
+  const [loadingText, setLoadingText] = useState<string>('处理中...');
+
+  // 发送交易的通用方法
+  const sendTransaction = useCallback(async (
+    transaction: ethers.providers.TransactionRequest,
+    loadingMsg = '处理中...'
+  ) => {
+    if (!library || !account) {
+      setError(new Error('钱包未连接'));
+      setStatus('failed');
+      return;
+    }
+
+    setStatus('pending');
+    setLoadingText(loadingMsg);
+    setError(null);
+    
+    try {
+      // 估算gas
+      const gasLimit = await library.estimateGas({
+        ...transaction,
+        from: account,
+      });
+
+      // 发送交易
+      const txResponse = await library.getSigner(account).sendTransaction({
+        ...transaction,
+        gasLimit: gasLimit.mul(120).div(100), // 增加20%的gas余量
+      });
+      
+      setTxHash(txResponse.hash);
+      setLoadingText('等待确认...');
+      
+      // 等待交易确认
+      const receipt = await txResponse.wait();
+      
+      if (receipt.status === 1) {
+        setStatus('success');
+        return receipt;
+      } else {
+        throw new Error('交易失败');
+      }
+    } catch (err) {
+      const error = err as Error;
+      setError(error);
+      setStatus('failed');
+      throw error;
+    }
+  }, [library, account]);
+
+  // 调用合约方法
+  const callContractMethod = useCallback(async (
+    contract: ethers.Contract,
+    methodName: string,
+    args: any[] = [],
+    overrides: ethers.providers.TransactionRequest = {},
+    loadingMsg = '处理中...'
+  ) => {
+    if (!contract) {
+      setError(new Error('合约未初始化'));
+      setStatus('failed');
+      return;
+    }
+
+    setStatus('pending');
+    setLoadingText(loadingMsg);
+    setError(null);
+    
+    try {
+      // 获取合约方法
+      const method = contract[methodName];
+      if (typeof method !== 'function') {
+        throw new Error(`合约方法 ${methodName} 不存在`);
+      }
+
+      // 如果是只读方法，直接调用
+      if (method.callStatic) {
+        const result = await method(...args);
+        setStatus('success');
+        return result;
+      }
+
+      // 发送交易
+      const txResponse = await method(...args, overrides);
+      setTxHash(txResponse.hash);
+      setLoadingText('等待确认...');
+      
+      // 等待交易确认
+      const receipt = await txResponse.wait();
+      
+      if (receipt.status === 1) {
+        setStatus('success');
+        return receipt;
+      } else {
+        throw new Error('交易失败');
+      }
+    } catch (err) {
+      const error = err as Error;
+      setError(error);
+      setStatus('failed');
+      throw error;
+    }
+  }, []);
+
+  // 重置状态
+  const reset = useCallback(() => {
+    setStatus('idle');
+    setTxHash('');
+    setError(null);
+    setLoadingText('处理中...');
+  }, []);
+
+  return {
+    sendTransaction,
+    callContractMethod,
+    reset,
+    status,
+    txHash,
+    error,
+    loadingText,
+    isPending: status === 'pending',
+    isSuccess: status === 'success',
+    isFailed: status === 'failed',
+  };
+};
+```
+
+## 实际应用示例
+
+### 红包创建组件
+
+```tsx
+// src/components/CreateRedPacket.tsx
+import { useState } from 'react';
+import { TextField, Button, Typography, Box, InputAdornment } from '@mui/material';
+import { useWeb3React } from '@web3-react/core';
+import { useRedPacketContract } from '../hooks/useContract';
+import { useTransaction } from '../hooks/useTransaction';
+import { parseEther } from '../utils/web3';
+
+const CreateRedPacket = () => {
+  const { chainId } = useWeb3React();
+  const redPacketContract = useRedPacketContract(chainId);
+  const { callContractMethod, isPending, txHash, isSuccess, error } = useTransaction();
+  
+  const [formData, setFormData] = useState({
+    amount: '',
+    count: '',
+    password: '',
+  });
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!redPacketContract) {
+      alert('合约未初始化，请检查网络连接');
+      return;
+    }
+    
+    try {
+      // 转换金额为wei
+      const amountWei = parseEther(formData.amount);
+      const count = parseInt(formData.count);
+      
+      if (isNaN(count) || count <= 0) {
+        alert('请输入有效的红包数量');
+        return;
+      }
+      
+      // 调用合约创建红包
+      await callContractMethod(
+        redPacketContract,
+        'createRedPacket',
+        [count, formData.password],
+        { value: amountWei },
+        '创建红包中...'
+      );
+      
+      if (isSuccess) {
+        alert('红包创建成功！');
+        setFormData({ amount: '', count: '', password: '' });
+      }
+    } catch (err) {
+      console.error('创建红包失败:', err);
+    }
+  };
+
+  return (
+    <Box component="form" onSubmit={handleSubmit} className="space-y-4">
+      <Typography variant="h6" className="mb-4">
+        创建红包
+      </Typography>
+      
+      <TextField
+        label="总金额 (ETH)"
+        name="amount"
+        type="number"
+        value={formData.amount}
+        onChange={handleChange}
+        required
+        fullWidth
+        InputProps={{
+          endAdornment: <InputAdornment position="end">ETH</InputAdornment>,
+        }}
+        disabled={isPending}
+      />
+      
+      <TextField
+        label="红包数量"
+        name="count"
+        type="number"
+        value={formData.count}
+        onChange={handleChange}
+        required
+        fullWidth
+        disabled={isPending}
+      />
+      
+      <TextField
+        label="红包密码"
+        name="password"
+        type="password"
+        value={formData.password}
+        onChange={handleChange}
+        required
+        fullWidth
+        disabled={isPending}
+      />
+      
+      <Button
+        type="submit"
+        variant="contained"
+        color="primary"
+        fullWidth
+        disabled={isPending}
+        className="btn-primary py-2"
+      >
+        {isPending ? '创建中...' : '创建红包'}
+      </Button>
+      
+      {txHash && (
+        <Typography variant="body2" className="text-center mt-2">
+          交易哈希: 
+          <a 
+            href={`https://sepolia.etherscan.io/tx/${txHash}`} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-primary-500 ml-1"
+          >
+            {txHash.substring(0, 10)}...
+          </a>
+        </Typography>
+      )}
+      
+      {error && (
+        <Typography color="error" className="text-center mt-2">
+          {error.message}
+        </Typography>
+      )}
+    </Box>
+  );
+};
+
+export default CreateRedPacket;
+```
+
+## Web3开发最佳实践
+
+在整合Web3技术栈的过程中，我总结了以下最佳实践：
+
+### 1. 错误处理
+
+- 为每个操作提供清晰的错误提示
+- 捕获并处理用户拒绝交易的情况
+- 提供交易失败的原因分析
+
+### 2. 用户体验
+
+- 显示交易处理的进度状态
+- 提供交易哈希的链接
+- 处理网络切换和钱包断开的情况
+
+### 3. 安全性
+
+- 验证用户输入，防止恶意数据
+- 使用合适的gas策略
+- 避免在前端存储敏感信息
+
+### 4. 性能优化
+
+- 缓存合约实例和ABI
+- 使用批量请求减少RPC调用
+- 优化链数据的获取和更新
+
+## 遇到的挑战
+
+1. **多链支持**：不同网络的合约地址管理
+2. **钱包兼容性**：不同钱包的行为差异处理
+3. **Gas优化**：动态调整gas策略
+4. **用户体验**：交易等待和反馈机制
+
+## 总结
+
+Web3技术栈的整合是区块链应用开发的核心环节。通过合理选择工具库和精心设计架构，可以构建出功能完善、用户体验良好的Web3应用。在实际开发中，我注重代码的可维护性和扩展性，同时关注用户体验和安全性，力求打造出高质量的区块链前端产品。
+
+下一篇，我将分享测试体系的建设经验，包括单元测试与E2E测试的最佳实践。

@@ -1,0 +1,601 @@
+---
+slug: "testing-system-construction"
+title: "项目的测试体系建设：单元测试与E2E测试实践"
+date: "2025-10-15"
+tags: ["前端架构", "单元测试", "E2E测试"]
+summary: "构建测试体系的实践经验，包括单元测试和E2E测试的实现"
+---
+
+# 第五篇：测试体系建设
+
+
+## Web3项目的测试体系建设：单元测试与E2E测试实践
+
+在Web3项目开发中，测试体系的建设尤为重要。区块链应用的特殊性使得测试不仅要验证功能正确性，还要确保资金安全和用户体验。在我的项目中，我构建了一套完整的测试体系，包括单元测试、组件测试和端到端测试，以确保代码质量和产品稳定性。
+
+## 测试策略思考
+
+### 为什么测试对Web3项目至关重要？
+
+Web3应用的特殊性使得测试比传统Web应用更为重要：
+
+- **资金安全**：代码错误可能导致用户资产损失
+- **智能合约交互**：与区块链的交互需要特别验证
+- **钱包兼容性**：不同钱包的行为差异需要测试覆盖
+- **用户体验**：交易流程的顺畅性直接影响用户留存
+
+### 测试金字塔策略
+
+我采用了经典的测试金字塔策略：
+
+- **单元测试**：覆盖工具函数、hooks和业务逻辑
+- **组件测试**：验证UI组件的渲染和交互
+- **E2E测试**：模拟用户操作流程，验证整体功能
+
+## 单元测试配置
+
+### 1. 安装依赖
+
+```bash
+# Jest核心库
+pnpm add -D jest@30.1.3 jest-environment-jsdom@30.1.2
+
+# React测试工具
+pnpm add -D @testing-library/react@16.3.0 @testing-library/jest-dom@6.8.0
+pnpm add -D @testing-library/user-event@14.6.1
+
+# TypeScript支持
+pnpm add -D ts-jest @types/jest
+
+# 模拟工具
+pnpm add -D jest-when @types/node
+```
+
+### 2. Jest配置
+
+```js
+// jest.config.js
+module.exports = {
+  preset: 'ts-jest',
+  testEnvironment: 'jsdom',
+  roots: ['<rootDir>/src'],
+  setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'],
+  testMatch: [
+    '<rootDir>/src/**/__tests__/**/*.{ts,tsx}',
+    '<rootDir>/src/**/*.{test,spec}.{ts,tsx}',
+  ],
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '\\.(css|less|scss|sass)$': 'identity-obj-proxy',
+    '\\.(jpg|jpeg|png|gif|webp|svg)$': '<rootDir>/__mocks__/fileMock.js',
+  },
+  collectCoverageFrom: [
+    'src/**/*.{ts,tsx}',
+    '!src/**/*.d.ts',
+    '!src/index.tsx',
+    '!src/serviceWorker.ts',
+    '!**/node_modules/**',
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'lcov', 'clover'],
+  testTimeout: 10000,
+};
+```
+
+### 3. 测试环境设置
+
+```tsx
+// src/setupTests.ts
+import '@testing-library/jest-dom';
+
+// 模拟Web3相关的全局对象
+Object.defineProperty(window, 'ethereum', {
+  writable: true,
+  value: {
+    isMetaMask: true,
+    request: jest.fn(),
+    on: jest.fn(),
+    removeListener: jest.fn(),
+    selectedAddress: '0x742d35Cc6634C0532925a3b8D4C9db96590c6C87',
+    chainId: '0x5',
+  },
+});
+
+// 模拟其他需要的全局对象
+global.ResizeObserver = jest.fn().mockImplementation(() => ({
+  observe: jest.fn(),
+  unobserve: jest.fn(),
+  disconnect: jest.fn(),
+}));
+
+// 扩展Jest匹配器
+expect.extend({
+  toBeValidAddress(received: string) {
+    const isValid = /^0x[a-fA-F0-9]{40}$/.test(received);
+    if (isValid) {
+      return {
+        message: () => `expected ${received} not to be a valid Ethereum address`,
+        pass: true,
+      };
+    } else {
+      return {
+        message: () => `expected ${received} to be a valid Ethereum address`,
+        pass: false,
+      };
+    }
+  },
+});
+```
+
+## 单元测试示例
+
+### 1. 工具函数测试
+
+```tsx
+// src/utils/__tests__/web3.test.ts
+import { formatAddress, parseEther, formatEther, isValidAddress } from '../web3';
+
+describe('Web3工具函数测试', () => {
+  describe('formatAddress', () => {
+    it('正确格式化以太坊地址', () => {
+      const address = '0x742d35Cc6634C0532925a3b8D4C9db96590c6C87';
+      expect(formatAddress(address)).toBe('0x742d...c6C87');
+      expect(formatAddress(address, 6)).toBe('0x742d35...b96590c6C87');
+    });
+
+    it('处理空地址', () => {
+      expect(formatAddress('')).toBe('');
+      expect(formatAddress(undefined as any)).toBe('');
+    });
+  });
+
+  describe('isValidAddress', () => {
+    it('验证有效地址', () => {
+      const validAddress = '0x742d35Cc6634C0532925a3b8D4C9db96590c6C87';
+      expect(isValidAddress(validAddress)).toBe(true);
+      expect(validAddress).toBeValidAddress();
+    });
+
+    it('识别无效地址', () => {
+      expect(isValidAddress('invalid-address')).toBe(false);
+      expect(isValidAddress('0x123')).toBe(false);
+      expect(isValidAddress('')).toBe(false);
+    });
+  });
+
+  describe('单位转换函数', () => {
+    it('正确解析以太币', () => {
+      const wei = parseEther('1.0');
+      expect(wei.toString()).toBe('1000000000000000000');
+      
+      const ether = formatEther(wei);
+      expect(ether).toBe('1.0');
+    });
+
+    it('处理大数转换', () => {
+      const wei = parseEther('1234.5678');
+      expect(formatEther(wei)).toBe('1234.5678');
+    });
+  });
+});
+```
+
+### 2. 自定义Hook测试
+
+```tsx
+// src/hooks/__tests__/useContract.test.ts
+import { renderHook } from '@testing-library/react';
+import { useContract, useERC20Contract } from '../useContract';
+import { useWeb3React } from '@web3-react/core';
+import { ethers } from 'ethers';
+
+// Mock dependencies
+jest.mock('@web3-react/core');
+jest.mock('ethers');
+
+describe('useContract Hook', () => {
+  const mockUseWeb3React = useWeb3React as jest.Mock;
+  const mockContract = {
+    address: '0xContractAddress',
+    balanceOf: jest.fn(),
+  };
+  
+  beforeEach(() => {
+    (ethers.Contract as jest.Mock).mockImplementation(() => mockContract);
+    
+    mockUseWeb3React.mockReturnValue({
+      library: {
+        getSigner: jest.fn().mockReturnValue({}),
+      },
+      account: '0xAccountAddress',
+      chainId: 1,
+    });
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('创建合约实例', () => {
+    const { result } = renderHook(() => 
+      useContract('0xContractAddress', [] as any)
+    );
+    
+    expect(ethers.Contract).toHaveBeenCalledWith(
+      '0xContractAddress',
+      [],
+      expect.anything()
+    );
+    expect(result.current).toEqual(mockContract);
+  });
+
+  it('当参数不足时返回null', () => {
+    // 没有地址
+    let { result } = renderHook(() => useContract('', [] as any));
+    expect(result.current).toBeNull();
+    
+    // 没有ABI
+    ({ result } = renderHook(() => useContract('0xAddress', null as any)));
+    expect(result.current).toBeNull();
+    
+    // 没有library
+    mockUseWeb3React.mockReturnValue({ library: null, account: '0xAccount' });
+    ({ result } = renderHook(() => useContract('0xAddress', [] as any)));
+    expect(result.current).toBeNull();
+  });
+
+  it('使用ERC20合约Hook', () => {
+    const { result } = renderHook(() => 
+      useERC20Contract('0xTokenAddress')
+    );
+    
+    expect(ethers.Contract).toHaveBeenCalled();
+    expect(result.current).toEqual(mockContract);
+  });
+});
+```
+
+### 3. 组件测试
+
+```tsx
+// src/components/__tests__/WalletConnector.test.tsx
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { Web3ReactProvider } from '@web3-react/core';
+import WalletConnector from '../WalletConnector';
+import { metaMask } from '../../connectors/metaMask';
+
+// Mock connectors
+jest.mock('../../connectors/metaMask', () => ({
+  metaMask: {
+    activate: jest.fn(),
+    deactivate: jest.fn(),
+  },
+  hooks: {
+    useMetaMask: () => ({ isActivated: false }),
+  },
+}));
+
+jest.mock('../../connectors/walletConnect', () => ({
+  walletConnect: {
+    activate: jest.fn(),
+  },
+}));
+
+// Mock useWeb3React
+jest.mock('@web3-react/core', () => ({
+  ...jest.requireActual('@web3-react/core'),
+  useWeb3React: () => ({
+    account: null,
+    active: false,
+    deactivate: jest.fn(),
+  }),
+}));
+
+// 创建测试Provider
+const TestProvider = ({ children }: { children: React.ReactNode }) => (
+  <Web3ReactProvider getLibrary={() => ({})}>
+    {children}
+  </Web3ReactProvider>
+);
+
+describe('WalletConnector组件', () => {
+  it('初始状态显示连接钱包按钮', () => {
+    render(
+      <TestProvider>
+        <WalletConnector />
+      </TestProvider>
+    );
+    
+    expect(screen.getByText('连接钱包')).toBeInTheDocument();
+  });
+
+  it('点击按钮显示钱包选项', async () => {
+    render(
+      <TestProvider>
+        <WalletConnector />
+      </TestProvider>
+    );
+    
+    // 点击连接钱包按钮
+    fireEvent.click(screen.getByText('连接钱包'));
+    
+    // 检查菜单选项
+    await waitFor(() => {
+      expect(screen.getByText('MetaMask')).toBeInTheDocument();
+      expect(screen.getByText('WalletConnect')).toBeInTheDocument();
+    });
+  });
+
+  it('选择MetaMask调用激活方法', async () => {
+    render(
+      <TestProvider>
+        <WalletConnector />
+      </TestProvider>
+    );
+    
+    // 打开菜单
+    fireEvent.click(screen.getByText('连接钱包'));
+    
+    // 选择MetaMask
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('MetaMask'));
+    });
+    
+    expect(metaMask.activate).toHaveBeenCalled();
+  });
+
+  it('已连接状态显示账户信息', () => {
+    // Mock已连接状态
+    jest.mock('@web3-react/core', () => ({
+      ...jest.requireActual('@web3-react/core'),
+      useWeb3React: () => ({
+        account: '0x742d35Cc6634C0532925a3b8D4C9db96590c6C87',
+        active: true,
+        deactivate: jest.fn(),
+      }),
+    }));
+    
+    render(
+      <TestProvider>
+        <WalletConnector />
+      </TestProvider>
+    );
+    
+    expect(screen.getByText('0x742d...c6C87')).toBeInTheDocument();
+  });
+});
+```
+
+## E2E测试配置
+
+### 1. 安装Cypress
+
+```bash
+pnpm add -D cypress@15.2.0 @testing-library/cypress
+npx cypress install
+```
+
+### 2. Cypress配置
+
+```ts
+// cypress.config.ts
+import { defineConfig } from 'cypress';
+
+export default defineConfig({
+  e2e: {
+    baseUrl: 'http://localhost:3000',
+    setupNodeEvents(on, config) {
+      // 实现节点事件监听器
+    },
+    specPattern: 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}',
+    supportFile: 'cypress/support/e2e.ts',
+    video: true,
+    screenshotOnRunFailure: true,
+    viewportWidth: 1280,
+    viewportHeight: 720,
+    defaultCommandTimeout: 10000,
+    env: {
+      TEST_ACCOUNT: '0x742d35Cc6634C0532925a3b8D4C9db96590c6C87',
+      TEST_PRIVATE_KEY: 'test_private_key_here',
+    },
+  },
+});
+```
+
+### 3. Cypress自定义命令
+
+```ts
+// cypress/support/commands.ts
+import '@testing-library/cypress/add-commands';
+
+// 模拟钱包连接
+Cypress.Commands.add('mockWallet', (options = {}) => {
+  const defaults = {
+    address: '0x742d35Cc6634C0532925a3b8D4C9db96590c6C87',
+    chainId: '0x5',
+    balance: '0x1bc16d674ec80000', // 2 ETH
+  };
+  
+  const config = { ...defaults, ...options };
+  
+  // 模拟window.ethereum对象
+  cy.window().then((win) => {
+    win.ethereum = {
+      isMetaMask: true,
+      selectedAddress: config.address,
+      chainId: config.chainId,
+      request: cy.stub().callsFake((request) => {
+        switch (request.method) {
+          case 'eth_requestAccounts':
+          case 'eth_accounts':
+            return [config.address];
+          case 'eth_chainId':
+            return config.chainId;
+          case 'eth_getBalance':
+            return config.balance;
+          case 'eth_sendTransaction':
+            return '0x' + Math.random().toString(16).substr(2, 64);
+          default:
+            return Promise.resolve();
+        }
+      }),
+      on: cy.stub(),
+      removeListener: cy.stub(),
+    };
+  });
+});
+
+// 连接钱包
+Cypress.Commands.add('connectWallet', () => {
+  cy.get('[data-testid="connect-wallet-button"]').click();
+  cy.contains('MetaMask').click();
+});
+```
+
+## E2E测试示例
+
+```ts
+// cypress/e2e/wallet-connection.cy.ts
+describe('钱包连接流程', () => {
+  beforeEach(() => {
+    // 访问应用并模拟钱包
+    cy.visit('/');
+    cy.mockWallet();
+  });
+
+  it('显示连接钱包按钮', () => {
+    cy.get('[data-testid="connect-wallet-button"]').should('be.visible');
+    cy.get('[data-testid="connect-wallet-button"]').contains('连接钱包');
+  });
+
+  it('成功连接钱包并显示账户信息', () => {
+    // 连接钱包
+    cy.connectWallet();
+    
+    // 验证连接状态
+    cy.get('[data-testid="wallet-info"]').should('be.visible');
+    cy.get('[data-testid="wallet-address"]').contains('0x742d...c6C87');
+    cy.get('[data-testid="wallet-balance"]').contains('2.0 ETH');
+  });
+
+  it('断开钱包连接', () => {
+    // 先连接钱包
+    cy.connectWallet();
+    
+    // 断开连接
+    cy.get('[data-testid="disconnect-button"]').click();
+    
+    // 验证已断开
+    cy.get('[data-testid="connect-wallet-button"]').should('be.visible');
+  });
+});
+
+// cypress/e2e/red-packet.cy.ts
+describe('红包功能', () => {
+  beforeEach(() => {
+    cy.visit('/');
+    cy.mockWallet();
+    cy.connectWallet();
+  });
+
+  it('创建红包流程', () => {
+    // 导航到创建红包页面
+    cy.get('[data-testid="create-redpacket-link"]').click();
+    
+    // 填写表单
+    cy.get('[name="amount"]').type('0.1');
+    cy.get('[name="count"]').type('5');
+    cy.get('[name="password"]').type('123456');
+    
+    // 提交表单
+    cy.get('[data-testid="create-button"]').click();
+    
+    // 模拟交易确认
+    cy.window().then((win) => {
+      win.ethereum.request.withArgs({ method: 'eth_sendTransaction' })
+        .resolves('0xTransactionHash');
+    });
+    
+    // 验证成功消息
+    cy.contains('红包创建成功').should('be.visible');
+    cy.contains('0xTransactionHash').should('be.visible');
+  });
+});
+```
+
+## 测试最佳实践
+
+### 单元测试最佳实践
+
+1. **测试隔离**：每个测试应该独立运行，不依赖外部状态
+2. **模拟依赖**：使用Jest mock模拟外部依赖，尤其是Web3相关服务
+3. **测试命名**：使用清晰的命名描述测试目的
+4. **测试覆盖**：关注核心业务逻辑和边界条件
+5. **避免实现细节**：测试行为而非实现细节
+
+### E2E测试最佳实践
+
+1. **用户视角**：从用户角度设计测试场景
+2. **关键流程**：优先测试核心用户流程
+3. **环境隔离**：使用测试网或本地节点进行测试
+4. **数据清理**：测试后清理测试数据
+5. **稳定测试**：避免不稳定的测试，使用适当的等待策略
+
+### Web3测试特别注意事项
+
+1. **钱包模拟**：合理模拟钱包行为，避免依赖真实钱包
+2. **交易模拟**：模拟交易确认和失败场景
+3. **多链测试**：测试不同网络的兼容性
+4. **gas处理**：测试不同gas策略的表现
+5. **错误处理**：验证错误情况的处理逻辑
+
+## 测试自动化
+
+在CI/CD流程中集成测试：
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          
+      - name: Install dependencies
+        run: pnpm install
+        
+      - name: Run unit tests
+        run: pnpm test:unit
+        
+      - name: Build
+        run: pnpm build
+        
+      - name: Start server
+        run: pnpm start &
+        env:
+          NODE_ENV: test
+          
+      - name: Wait for server
+        run: npx wait-on http://localhost:3000
+        
+      - name: Run E2E tests
+        run: pnpm test:e2e
+```
+
+## 总结
+
+测试体系是Web3项目质量保障的关键环节。通过构建完整的测试体系，可以有效减少生产环境的bug，提升用户体验，保障资金安全。在实际开发中，我注重测试的有效性和效率，选择合适的测试工具和策略，确保测试能够真正发现问题而不增加过多的开发负担。
+
+下一篇，我将分享组件开发与文档化的实践经验，包括Storybook的应用和组件设计原则。

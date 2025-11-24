@@ -1,0 +1,716 @@
+---
+slug: "component-development-documentation"
+title: "组件开发与文档化：Storybook实践指南"
+date: "2025-10-20"
+tags: ["前端架构", "Storybook"]
+summary: "使用Storybook进行组件开发和文档化的实践经验"
+---
+
+# 第六篇：组件开发与文档化
+
+## Web3组件开发与文档化：Storybook实践指南
+
+在Web3项目开发中，组件的可复用性和文档化尤为重要。随着项目规模的扩大，如何保证组件的一致性、可维护性和可测试性成为关键挑战。在我的项目中，我选择Storybook作为组件开发和文档化工具，构建了一套完整的组件库和开发流程。
+
+## 为什么选择Storybook？
+
+### Storybook的核心优势
+
+- **独立开发环境**：可以在隔离环境中开发和测试组件，不依赖完整应用
+- **自动文档化**：生成交互式组件文档，方便团队协作
+- **视觉测试**：提供组件的视觉回归测试能力
+- **多种框架支持**：完美支持React和TypeScript
+- **丰富插件生态**：可以扩展各种功能，如 accessibility 检查、设计令牌集成等
+
+### Web3项目的特殊需求
+
+Web3项目对组件有一些特殊要求，Storybook能够很好地满足：
+
+- **钱包连接组件**：需要在不同连接状态下测试
+- **交易组件**：需要模拟不同的交易状态
+- **响应式设计**：适配不同设备和钱包界面
+- **主题定制**：支持不同的品牌主题和暗色模式
+
+## Storybook配置
+
+### 1. 安装依赖
+
+```bash
+# 安装Storybook核心依赖
+pnpm add -D @storybook/react@9.1.1 @storybook/addon-essentials@9.1.1
+pnpm add -D @storybook/addon-styling-webpack@1.0.0 @storybook/addon-a11y@9.1.1
+pnpm add -D @storybook/react-webpack5@9.1.1 storybook@9.1.1
+```
+
+### 2. 初始化配置
+
+```bash
+# 初始化Storybook配置
+npx storybook@latest init
+```
+
+### 3. 核心配置文件
+
+```js
+// .storybook/main.ts
+import type { StorybookConfig } from "@storybook/react-webpack5";
+
+const config: StorybookConfig = {
+  stories: ["../src/**/*.mdx", "../src/**/*.stories.@(js|jsx|mjs|ts|tsx)"],
+  addons: [
+    "@storybook/addon-onboarding",
+    "@storybook/addon-essentials",
+    "@storybook/addon-styling-webpack",
+    "@storybook/addon-a11y",
+  ],
+  framework: {
+    name
+: "@storybook/react-webpack5",
+    options: {},
+  },
+  docs: {
+    autodocs: "tag",
+  },
+  staticDirs: ["../public"],
+  webpackFinal: async (config) => {
+    // 配置Tailwind CSS支持
+    config.module.rules.push({
+      test: /\.css$/,
+      use: [
+        {
+          loader: "postcss-loader",
+          options: {
+            postcssOptions: {
+              plugins: [require("tailwindcss"), require("autoprefixer")],
+            },
+          },
+        },
+      ],
+      include: __dirname,
+    });
+
+    // 配置路径别名
+    if (config.resolve) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        "@": require("path").resolve(__dirname, "../src"),
+      };
+    }
+
+    return config;
+  },
+};
+
+export default config;
+```
+
+```tsx
+// .storybook/preview.tsx
+import type { Preview } from "@storybook/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import CssBaseline from "@mui/material/CssBaseline";
+import "../src/tailwind.css";
+import "../src/index.css";
+
+// 创建与项目一致的主题
+const theme = createTheme({
+  palette: {
+    primary: {
+      main: "#3b82f6",
+    },
+    secondary: {
+      main: "#ec4899",
+    },
+    background: {
+      default: "#f8fafc",
+      paper: "#ffffff",
+    },
+  },
+  typography: {
+    fontFamily: '"Inter", "system-ui", "sans-serif"',
+  },
+});
+
+// 暗色主题
+const darkTheme = createTheme({
+  ...theme,
+  palette: {
+    ...theme.palette,
+    mode: "dark",
+    background: {
+      default: "#0f172a",
+      paper: "#1e293b",
+    },
+  },
+});
+
+const preview: Preview = {
+  parameters: {
+    actions: { argTypesRegex: "^on[A-Z].*" },
+    controls: {
+      matchers: {
+        color: /(background|color)$/i,
+        date: /Date$/,
+      },
+    },
+    backgrounds: {
+      default: "light",
+      values: [
+        { name: "light", value: "#f8fafc" },
+        { name: "dark", value: "#0f172a" },
+        { name: "primary", value: "#eff6ff" },
+      ],
+    },
+  },
+
+  decorators: [
+    (Story, context) => {
+      const isDarkMode = context.parameters.backgrounds?.value === "#0f172a";
+      
+      return (
+        <ThemeProvider theme={isDarkMode ? darkTheme : theme}>
+          <CssBaseline />
+          <div className="p-6 max-w-4xl mx-auto">
+            <Story />
+          </div>
+        </ThemeProvider>
+      );
+    },
+  ],
+};
+
+export default preview;
+```
+
+## 组件开发实践
+
+### 1. 基础组件设计原则
+
+在Web3项目中，我遵循以下组件设计原则：
+
+- **单一职责**：每个组件只负责一项功能
+- **可复用性**：设计通用接口，支持多种场景
+- **状态隔离**：组件状态尽量内部管理，外部通过props控制
+- **Web3适配**：考虑钱包连接、交易状态等Web3特有场景
+- **可访问性**：确保组件符合WCAG标准
+- **类型安全**：完整的TypeScript类型定义
+
+### 2. 原子组件示例：Button
+
+```tsx
+// src/components/Button/Button.tsx
+import { Button as MuiButton, ButtonProps } from "@mui/material";
+import { ReactNode } from "react";
+
+export type CustomButtonVariant = "primary" | "secondary" | "outline" | "text";
+
+interface CustomButtonProps extends ButtonProps {
+  variant?: CustomButtonVariant;
+  children: ReactNode;
+  isLoading?: boolean;
+  loadingText?: string;
+}
+
+const Button = ({
+  variant = "primary",
+  isLoading = false,
+  loadingText = "处理中",
+  children,
+  ...props
+}: CustomButtonProps) => {
+  // 根据variant设置样式
+  const getVariantProps = () => {
+    switch (variant) {
+      case "primary":
+        return {
+          variant: "contained" as const,
+          color: "primary" as const,
+          className: "btn-primary",
+        };
+      case "secondary":
+        return {
+          variant: "contained" as const,
+          color: "secondary" as const,
+          className: "btn-secondary",
+        };
+      case "outline":
+        return {
+          variant: "outlined" as const,
+          color: "primary" as const,
+          className: "border-primary-500 text-primary-500",
+        };
+      case "text":
+        return {
+          variant: "text" as const,
+          color: "primary" as const,
+          className: "text-primary-500 hover:text-primary-700",
+        };
+    }
+  };
+
+  const variantProps = getVariantProps();
+
+  return (
+    <MuiButton
+      {...variantProps}
+      {...props}
+      disabled={isLoading || props.disabled}
+    >
+      {isLoading ? loadingText : children}
+    </MuiButton>
+  );
+};
+
+export default Button;
+```
+
+### 3. 组件Story编写
+
+```tsx
+// src/components/Button/Button.stories.tsx
+import type { Meta, StoryObj } from "@storybook/react";
+import Button, { CustomButtonVariant } from "./Button";
+import { CircularProgress } from "@mui/material";
+
+const meta: Meta<typeof Button> = {
+  title: "Components/Button",
+  component: Button,
+  tags: ["autodocs"],
+  argTypes: {
+    variant: {
+      control: { type: "select" },
+      options: ["primary", "secondary", "outline", "text"],
+      description: "按钮样式变体",
+    },
+    size: {
+      control: { type: "select" },
+      options: ["small", "medium", "large"],
+      description: "按钮大小",
+    },
+    isLoading: {
+      control: { type: "boolean" },
+      description: "是否显示加载状态",
+    },
+    loadingText: {
+      control: { type: "text" },
+      description: "加载状态文本",
+    },
+    disabled: {
+      control: { type: "boolean" },
+      description: "是否禁用",
+    },
+    onClick: {
+      action: "clicked",
+      description: "点击事件",
+    },
+  },
+  args: {
+    children: "按钮",
+    variant: "primary",
+    size: "medium",
+    isLoading: false,
+    disabled: false,
+  },
+};
+
+export default meta;
+type Story = StoryObj<typeof Button>;
+
+// 基础故事
+export const Primary: Story = {
+  args: {
+    variant: "primary",
+    children: "主要按钮",
+  },
+};
+
+export const Secondary: Story = {
+  args: {
+    variant: "secondary",
+    children: "次要按钮",
+  },
+};
+
+export const Outline: Story = {
+  args: {
+    variant: "outline",
+    children: "轮廓按钮",
+  },
+};
+
+export const Text: Story = {
+  args: {
+    variant: "text",
+    children: "文本按钮",
+  },
+};
+
+// 加载状态
+export const Loading: Story = {
+  args: {
+    variant: "primary",
+    children: "提交",
+    isLoading: true,
+    loadingText: "处理中...",
+  },
+};
+
+// 禁用状态
+export const Disabled: Story = {
+  args: {
+    variant: "primary",
+    children: "禁用按钮",
+    disabled: true,
+  },
+};
+
+// 不同大小
+export const Sizes: Story = {
+  args: {
+    variant: "primary",
+    children: "不同大小",
+  },
+  render: (args) => (
+    <div className="flex gap-4">
+      <Button {...args} size="small" children="小按钮" />
+      <Button {...args} size="medium" children="中按钮" />
+      <Button {...args} size="large" children="大按钮" />
+    </div>
+  ),
+};
+
+// Web3特定场景：交易按钮
+export const TransactionButton: Story = {
+  args: {
+    variant: "primary",
+    children: "发送交易",
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "Web3交易场景专用按钮，包含加载状态和交易反馈",
+      },
+    },
+  },
+  render: (args) => (
+    <div className="flex flex-col gap-4">
+      <Button {...args} isLoading={false} children="发送交易" />
+      <Button {...args} isLoading={true} loadingText="签名中..." />
+      <Button {...args} isLoading={true} loadingText="等待区块确认..." />
+    </div>
+  ),
+};
+```
+
+### 4. Web3专用组件示例：WalletConnectButton
+
+```tsx
+// src/components/WalletConnectButton/WalletConnectButton.tsx
+import { Button } from "@mui/material";
+import { AccountBalanceWallet, Link } from "@mui/icons-material";
+import { useState } from "react";
+import { useWallet } from "@/hooks/useWallet";
+import { formatAddress } from "@/utils/web3";
+
+interface WalletConnectButtonProps {
+  variant?: "contained" | "outlined" | "text";
+  size?: "small" | "medium" | "large";
+}
+
+const WalletConnectButton = ({
+  variant = "contained",
+  size = "medium",
+}: WalletConnectButtonProps) => {
+  const { account, isConnected, connectWallet, disconnectWallet, isLoading } = useWallet();
+  const [isHovered, setIsHovered] = useState(false);
+
+  if (isConnected && account) {
+    return (
+      <Button
+        variant={variant}
+        size={size}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        onClick={disconnectWallet}
+        className="flex items-center gap-2"
+      >
+        <AccountBalanceWallet fontSize="small" />
+        <span>{formatAddress(account)}</span>
+        {isHovered && <span className="text-xs">(断开)</span>}
+      </Button>
+    );
+  }
+
+  return (
+    <Button
+      variant={variant}
+      size={size}
+      onClick={connectWallet}
+      disabled={isLoading}
+      className="flex items-center gap-2"
+    >
+      <AccountBalanceWallet fontSize="small" />
+      {isLoading ? "连接中..." : "连接钱包"}
+    </Button>
+  );
+};
+
+export default WalletConnectButton;
+```
+
+### 5. 组件Story：WalletConnectButton
+
+```tsx
+// src/components/WalletConnectButton/WalletConnectButton.stories.tsx
+import type { Meta, StoryObj } from "@storybook/react";
+import WalletConnectButton from "./WalletConnectButton";
+import { fn } from "@storybook/test";
+import { Web3ReactProvider } from "@web3-react/core";
+
+// Mock Web3上下文
+const MockWeb3Provider = ({ 
+  isConnected = false, 
+  account = "0x742d35Cc6634C0532925a3b8D4C9db96590c6C87",
+  children 
+}) => {
+  const mockUseWallet = () => ({
+    account,
+    isConnected,
+    isLoading: false,
+    connectWallet: fn(),
+    disconnectWallet: fn(),
+  });
+
+  // 覆盖useWallet hook
+  jest.doMock("@/hooks/useWallet", () => ({
+    useWallet: mockUseWallet,
+  }));
+
+  return <>{children}</>;
+};
+
+const meta: Meta<typeof WalletConnectButton> = {
+  title: "Web3/Components/WalletConnectButton",
+  component: WalletConnectButton,
+  tags: ["autodocs"],
+  argTypes: {
+    variant: {
+      control: { type: "select" },
+      options: ["contained", "outlined", "text"],
+    },
+    size: {
+      control: { type: "select" },
+      options: ["small", "medium", "large"],
+    },
+  },
+  args: {
+    variant: "contained",
+    size: "medium",
+  },
+  decorators: [
+    (Story, context) => (
+      <MockWeb3Provider {...context.args.web3Props}>
+        <Story />
+      </MockWeb3Provider>
+    ),
+  ],
+};
+
+export default meta;
+type Story = StoryObj<typeof WalletConnectButton>;
+
+// 未连接状态
+export const Disconnected: Story = {
+  args: {
+    web3Props: { isConnected: false },
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "钱包未连接时的状态",
+      },
+    },
+  },
+};
+
+// 已连接状态
+export const Connected: Story = {
+  args: {
+    web3Props: { 
+      isConnected: true,
+      account: "0x742d35Cc6634C0532925a3b8D4C9db96590c6C87",
+    },
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "钱包已连接时的状态，显示格式化后的地址",
+      },
+    },
+  },
+};
+
+// 不同变体
+export const Variants: Story = {
+  args: {
+    web3Props: { isConnected: false },
+  },
+  render: (args) => (
+    <div className="flex gap-4">
+      <WalletConnectButton {...args} variant="contained" />
+      <WalletConnectButton {...args} variant="outlined" />
+      <WalletConnectButton {...args} variant="text" />
+    </div>
+  ),
+};
+
+// 加载状态
+export const Loading: Story = {
+  args: {
+    web3Props: { isConnected: false },
+  },
+  render: (args) => {
+    // Mock加载状态
+    jest.doMock("@/hooks/useWallet", () => ({
+      useWallet: () => ({
+        account: null,
+        isConnected: false,
+        isLoading: true,
+        connectWallet: fn(),
+        disconnectWallet: fn(),
+      }),
+    }));
+    
+    return <WalletConnectButton {...args} />;
+  },
+};
+```
+
+## 组件文档化最佳实践
+
+### 1. 自动文档生成
+
+Storybook的自动文档功能可以快速生成组件文档：
+
+- 使用`tags: ["autodocs"]`启用自动文档
+- 通过`argTypes`定义属性说明
+- 使用`parameters.docs`添加额外文档说明
+- 为复杂组件编写MDX文档
+
+### 2. MDX文档示例
+
+```tsx
+// src/components/WalletConnectButton/WalletConnectButton.mdx
+import { Meta, ArgsTable, Stories } from "@storybook/addon-docs";
+import WalletConnectButton from "./WalletConnectButton";
+<Meta of={WalletConnectButton} />
+```
+
+# WalletConnectButton 组件
+
+Web3应用专用的钱包连接按钮，支持MetaMask、WalletConnect等主流钱包连接。
+
+## 功能特点
+
+- 自动检测钱包连接状态
+- 显示格式化的钱包地址
+- 支持多种按钮样式变体
+- 包含加载状态指示
+- 响应式设计，适配不同设备
+
+## 使用场景
+
+- 应用顶部导航栏
+- 交易页面
+- 需要用户身份验证的场景
+- Web3功能入口
+
+## 代码示例
+
+```tsx
+import WalletConnectButton from "@/components/WalletConnectButton";
+
+function App() {
+  return (
+    <header className="flex justify-end p-4">
+      <WalletConnectButton variant="contained" />
+    </header>
+  );
+}
+```
+
+## 属性说明
+```javascript
+<ArgsTable of={WalletConnectButton} />
+```
+## 演示示例
+
+```javascript
+<Stories of={WalletConnectButton} />
+```
+### 3. 组件开发工作流
+
+我在项目中采用的组件开发工作流：
+
+1. **设计阶段**：根据UI设计稿定义组件接口和样式
+2. **开发阶段**：
+   - 先编写组件代码和TypeScript类型
+   - 编写Story覆盖各种状态和变体
+   - 在Storybook中调试组件
+3. **测试阶段**：
+   - 视觉检查组件在不同状态下的表现
+   - 检查可访问性
+   - 编写单元测试
+4. **文档阶段**：
+   - 完善组件注释
+   - 编写使用示例
+   - 生成自动文档
+
+### 4. 版本控制与发布
+
+- 使用语义化版本管理组件库版本
+- 每次组件变更都更新Story
+- 发布前进行视觉回归测试
+- 维护CHANGELOG记录组件变更
+
+## Web3组件特殊考量
+
+### 1. 状态管理
+
+Web3组件往往需要处理多种状态：
+
+- 钱包未连接状态
+- 连接中状态
+- 已连接状态
+- 交易签名中状态
+- 错误状态
+
+### 2. 错误处理
+
+组件需要优雅处理Web3特有的错误：
+
+- 钱包未安装
+- 用户拒绝连接
+- 网络切换
+- 交易失败
+- 合约调用错误
+
+### 3. 性能优化
+
+- 避免不必要的区块链请求
+- 缓存合约实例
+- 优化重渲染
+- 延迟加载Web3相关依赖
+
+## 总结
+
+Storybook为Web3项目的组件开发和文档化提供了强大的支持。通过Storybook，开发团队可以：
+
+- 在隔离环境中开发组件，提高开发效率
+- 生成交互式文档，方便团队协作和知识共享
+- 进行视觉测试，保证组件一致性
+- 快速展示组件的各种状态和变体
+
+在Web3项目中，组件的质量和可复用性直接影响产品的用户体验和开发效率。通过合理的组件设计和完善的文档化，可以显著提升项目的可维护性和扩展性。
+
+下一篇，我将分享代码质量与规范的实践经验，包括Git Hooks与提交规范的配置和使用。

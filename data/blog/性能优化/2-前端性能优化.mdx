@@ -1,0 +1,255 @@
+---
+title: 前端性能优化实战手册：从通用策略到框架调优
+date: '2025-01-25'
+tags: ['性能优化']
+draft: false
+summary: 从通用优化手段到React/Vue框架级调优，再到工具链实战，一文讲透前端性能优化的完整体系
+---
+
+## 前言：性能优化不是"玄学"，而是科学
+
+前端性能优化常常被新手视为"高端操作"，但其实它有明确的方法论和落地路径——从资源加载到框架渲染，从通用策略到工具辅助，每一步都有章可循。
+
+今天这篇文章，我会从**通用优化手段**→**框架专项调优**→**工具链实战**三个维度，带你系统掌握前端性能优化的核心技能，看完就能用到项目里。
+
+
+## 一、先打好基础：通用性能优化手段
+
+无论用什么框架，这些通用优化策略都是"必选项"，能解决80%的性能问题：
+
+### 1. 资源加载优化：让文件更小、加载更快
+
+#### （1）代码压缩与分割
+- **压缩**：用Terser压缩JS，cssnano压缩CSS，HTMLMinifier压缩HTML，通常能减少30%-50%的体积；
+- **分割**：用Webpack/Rollup的Code Splitting拆分代码，首屏只加载必要的bundle，其他路由/组件懒加载。
+
+#### （2）懒加载与预加载
+- **懒加载**：图片用`loading="lazy"`，组件用动态import（`import('./Component')`）；
+- **预加载**：关键资源用`<link rel="preload">`，比如首屏字体、核心JS；
+- **预连接**：`<link rel="preconnect" href="https://cdn.example.com">`提前建立CDN连接。
+
+#### （3）CDN与缓存策略
+- 静态资源放CDN，利用边缘节点加速；
+- 设置合理的缓存头：`Cache-Control: max-age=31536000`（长期缓存）+ 文件名哈希（缓存更新）。
+
+### 2. 图像与媒体优化：体积是关键
+
+- 用现代格式：WebP/AVIF比JPG小30%以上；
+- 响应式图片：`srcset`+`sizes`适配不同设备；
+- SVG优化：用SVGO去除冗余代码，矢量图比位图更适合图标。
+
+### 3. 网络层优化：减少请求耗时
+
+- 启用HTTP/2/HTTP/3：多路复用、头部压缩；
+- Gzip/Brotli压缩：服务器端开启，文本文件压缩率可达70%；
+- 减少重定向：避免3xx状态码，直接访问目标资源。
+
+### 4. 渲染优化：让主线程更"闲"
+
+- 减少DOM操作：批量更新DOM，用DocumentFragment；
+- 避免长任务：拆分超过50ms的JS任务，用`requestIdleCallback`；
+- CSS优化：避免复杂选择器（如`div > p + span`），用`transform`/`opacity`做动画（不触发重排）。
+
+
+## 二、React专项优化：框架级调优技巧
+
+React本身已经很高效，但复杂应用仍需针对性优化：
+
+### 1. 避免不必要的渲染
+
+#### （1）React.memo + useCallback/useMemo
+```jsx
+// 函数组件用React.memo浅比较props
+const Child = React.memo(({ data, onClick }) => {
+  return <div onClick={onClick}>{data}</div>;
+});
+
+// 父组件用useCallback缓存函数，useMemo缓存计算结果
+const Parent = () => {
+  const [count, setCount] = useState(0);
+  const handleClick = useCallback(() => {
+    console.log('click');
+  }, []);
+  const computedData = useMemo(() => {
+    return count * 2;
+  }, [count]);
+  
+  return <Child data={computedData} onClick={handleClick} />;
+};
+```
+
+#### （2）PureComponent/shouldComponentUpdate
+类组件用`PureComponent`（浅比较state/props），或自定义`shouldComponentUpdate`：
+```jsx
+class MyComponent extends React.Component {
+  shouldComponentUpdate(nextProps, nextState) {
+    return nextProps.data !== this.props.data; // 只在data变化时更新
+  }
+}
+```
+
+### 2. 状态管理优化
+
+- 局部状态优先：能用`useState`就不用全局状态；
+- 拆分状态：避免大state对象，拆分成多个小状态；
+- 不可变数据：用Immer.js简化不可变操作，避免意外的引用更新。
+
+### 3. 懒加载与代码分割
+
+```jsx
+// 路由级懒加载
+import { lazy, Suspense } from 'react';
+const Home = lazy(() => import('./Home'));
+
+function App() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <Route path="/home" component={Home} />
+    </Suspense>
+  );
+}
+```
+
+### 4. useTransition：优先级渲染
+
+React 18的`useTransition`能区分紧急更新（如输入）和非紧急更新（如列表过滤）：
+```jsx
+const [inputValue, setInputValue] = useState('');
+const [list, setList] = useState([]);
+const [isPending, startTransition] = useTransition();
+
+const handleInput = (e) => {
+  setInputValue(e.target.value); // 紧急更新：输入框立即响应
+  startTransition(() => {
+    // 非紧急更新：过滤列表，不阻塞输入
+    const filteredList = largeData.filter(item => 
+      item.includes(e.target.value)
+    );
+    setList(filteredList);
+  });
+};
+
+return (
+  <>
+    <input value={inputValue} onChange={handleInput} />
+    {isPending ? <div>Loading...</div> : <List data={list} />}
+  </>
+);
+```
+
+### 5. 工具辅助：why-did-you-render
+
+**什么是wdyr？**  
+一个能检测组件不必要渲染的工具，开发环境下告诉你"为什么这个组件又渲染了"。
+
+**如何落地？**  
+1. 安装：`npm i @welldone-software/why-did-you-render --save-dev`  
+2. 配置（wdyr.tsx）：
+```tsx
+import React from 'react';
+
+if (process.env.NODE_ENV === 'development') {
+  const whyDidYouRender = require('@welldone-software/why-did-you-render');
+  whyDidYouRender(React, {
+    onlyLogs: true,
+    trackHooks: true,
+    trackAllPureComponents: true,
+  });
+}
+```
+3. 入口文件引入：`import './wdyr';`  
+
+**原理**：  
+wdyr通过重写React组件的生命周期方法（如`componentDidUpdate`），比较新旧props/state，当发现无意义的更新时，在控制台输出警告，帮你定位性能瓶颈。
+
+
+## 三、Vue专项优化：框架特性最大化利用
+
+Vue的响应式系统很智能，但这些细节能让性能更上一层楼：
+
+### 1. 组件渲染优化
+
+#### （1）v-once与v-memo
+```vue
+<!-- v-once：只渲染一次 -->
+<div v-once>{ { staticData } }</div>
+
+<!-- v-memo：依赖变化时才更新 -->
+<div v-memo="[user.id]">
+  { { user.name } } - { { user.age } }
+</div>
+```
+
+#### （2）列表渲染优化
+- 用唯一key：避免就地复用导致的错误；
+- 虚拟列表：长列表用vue-virtual-scroller，只渲染可视区域。
+
+### 2. 响应式优化
+
+- 冻结非响应式数据：`Object.freeze(largeData)`，避免Vue劫持；
+- 计算属性缓存：用`computed`代替`methods`，避免重复计算；
+- 防抖节流：高频事件（如输入）用`lodash.debounce`。
+
+### 3. 组件懒加载
+
+```vue
+<!-- 路由懒加载 -->
+const Home = () => import('./Home.vue');
+
+const routes = [
+  { path: '/home', component: Home }
+];
+
+<!-- 组件内懒加载 -->
+<template>
+  <lazy-component />
+</template>
+
+<script>
+export default {
+  components: {
+    LazyComponent: () => import('./LazyComponent.vue')
+  }
+};
+</script>
+```
+
+### 4. 第三方库按需引入
+
+Element Plus/Vant等UI库，用按需引入减少体积：
+```js
+// main.js
+import { ElButton, ElInput } from 'element-plus';
+import 'element-plus/es/components/button/style/css';
+import 'element-plus/es/components/input/style/css';
+
+app.use(ElButton).use(ElInput);
+```
+
+
+## 四、性能监控与工具链
+
+优化不是一次性工作，需要持续监控：
+
+### 1. 性能指标监控
+用Performance API监控Core Web Vitals（LCP/INP/CLS），上报到后端分析。
+
+### 2. 调试工具
+- Lighthouse：Chrome自带，生成性能报告；
+- React DevTools：查看组件渲染次数，找出耗时组件；
+- Vue DevTools：性能面板分析组件渲染时间。
+
+### 3. 构建优化
+- Webpack Bundle Analyzer：分析bundle体积，找出大依赖；
+- Tree Shaking：开启`sideEffects: false`，剔除无用代码；
+- SWC/Terser：更快的代码压缩工具。
+
+
+## 五、总结：性能优化的核心思路
+
+1. **先量化，后优化**：用工具找到性能瓶颈，不要盲目优化；
+2. **从瓶颈入手**：80%的性能问题来自20%的代码，优先解决关键问题；
+3. **平衡体验与复杂度**：过度优化会增加维护成本，比如不要给每个组件都加`useMemo`；
+4. **持续监控**：线上用RUM（真实用户监控），及时发现问题。
+
+性能优化是个迭代过程，没有"银弹"，但只要掌握了正确的方法，就能让你的应用跑得又快又稳。

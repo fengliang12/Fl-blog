@@ -1,0 +1,294 @@
+---
+title: 手撕Vue Diff算法：虚拟DOM的高效更新策略
+date: '2022-05-11'
+tags: ['Vue', 'Diff算法', '虚拟DOM']
+draft: false
+summary: 详解Vue的Diff算法实现原理，包括双指针比对、key优化、节点复用策略
+---
+
+# 第三篇：Vue Diff算法深度解析（虚拟DOM的高效更新）
+
+## 一、Diff算法核心思想
+
+Vue的Diff算法基于两个核心假设：
+1. **同层比较**：只比较同一层级的节点，不会跨层级比较
+2. **key标识**：通过key标识节点唯一性，实现高效复用
+
+## 二、虚拟DOM与真实DOM映射
+
+### 1. VNode结构
+
+```javascript
+// vdom/vnode.js
+export default class VNode {
+  constructor(tag, data, key, children, text) {
+    this.tag = tag // 标签名
+    this.data = data // 属性数据
+    this.key = key // 节点标识
+    this.children = children // 子节点
+    this.text = text // 文本内容
+    this.el = null // 对应的真实DOM元素
+  }
+}
+```
+
+### 2. 创建真实DOM
+
+```javascript
+// vdom/patch.js
+function createElm(vnode) {
+  const { tag, data, children, text } = vnode
+  
+  if (typeof tag === 'string') {
+    // 元素节点
+    vnode.el = document.createElement(tag)
+    updateProperties(vnode) // 更新属性
+    
+    // 递归创建子节点
+    children.forEach(child => {
+      vnode.el.appendChild(createElm(child))
+    })
+  } else {
+    // 文本节点
+    vnode.el = document.createTextNode(text)
+  }
+  
+  return vnode.el
+}
+
+// 更新元素属性
+function updateProperties(vnode) {
+  const el = vnode.el
+  const data = vnode.data || {}
+  
+  for (const key in data) {
+    if (key === 'style') {
+      // 处理样式
+      for (const styleName in data.style) {
+        el.style[styleName] = data.style[styleName]
+      }
+    } else if (key === 'class') {
+      el.className = data.class
+    } else {
+      // 普通属性
+      el.setAttribute(key, data[key])
+    }
+  }
+}
+```
+
+## 三、Diff算法核心实现
+
+### 1. Patch入口函数
+
+```javascript
+// vdom/patch.js
+export function patch(oldVnode, vnode) {
+  // 首次渲染：oldVnode是真实DOM元素
+  if (oldVnode.nodeType) {
+    const elm = oldVnode
+    const parentElm = elm.parentNode
+    const newElm = createElm(vnode)
+    
+    parentElm.insertBefore(newElm, elm.nextSibling)
+    parentElm.removeChild(elm)
+    
+    return newElm
+  } else {
+    // 更新阶段：对比两个VNode
+    return patchVnode(oldVnode, vnode)
+  }
+}
+```
+
+### 2. 节点比对核心逻辑
+
+```javascript
+function patchVnode(oldVnode, vnode) {
+  // 节点相同直接返回
+  if (oldVnode === vnode) return
+  
+  // 复用真实DOM元素
+  const el = vnode.el = oldVnode.el
+  
+  // 文本节点更新
+  if (!oldVnode.tag && !vnode.tag) {
+    if (oldVnode.text !== vnode.text) {
+      el.textContent = vnode.text
+    }
+    return
+  }
+  
+  // 标签不同直接替换
+  if (oldVnode.tag !== vnode.tag) {
+    const parentElm = el.parentNode
+    parentElm.replaceChild(createElm(vnode), el)
+    return
+  }
+  
+  // 更新属性
+  updateProperties(vnode, oldVnode.data)
+  
+  // 比对子节点
+  const oldChildren = oldVnode.children || []
+  const newChildren = vnode.children || []
+  
+  if (oldChildren.length > 0 && newChildren.length > 0) {
+    // 新旧都有子节点：核心Diff算法
+    updateChildren(el, oldChildren, newChildren)
+  } else if (newChildren.length > 0) {
+    // 新节点有子节点：添加
+    newChildren.forEach(child => {
+      el.appendChild(createElm(child))
+    })
+  } else if (oldChildren.length > 0) {
+    // 旧节点有子节点：删除
+    el.innerHTML = ''
+  }
+}
+```
+
+### 3. 双指针Diff算法
+
+```javascript
+function updateChildren(parentElm, oldChildren, newChildren) {
+  let oldStartIdx = 0
+  let oldEndIdx = oldChildren.length - 1
+  let oldStartVnode = oldChildren[0]
+  let oldEndVnode = oldChildren[oldEndIdx]
+  
+  let newStartIdx = 0
+  let newEndIdx = newChildren.length - 1
+  let newStartVnode = newChildren[0]
+  let newEndVnode = newChildren[newEndIdx]
+  
+  // 创建key映射表
+  const keyToIdx = createKeyToOldIdx(oldChildren)
+  
+  while (oldStartIdx <= oldEndIdx && newStartIdx <= newEndIdx) {
+    // 跳过空节点
+    if (!oldStartVnode) {
+      oldStartVnode = oldChildren[++oldStartIdx]
+    } else if (!oldEndVnode) {
+      oldEndVnode = oldChildren[--oldEndIdx]
+    }
+    
+    // 1. 旧开始 vs 新开始
+    else if (isSameVnode(oldStartVnode, newStartVnode)) {
+      patchVnode(oldStartVnode, newStartVnode)
+      oldStartVnode = oldChildren[++oldStartIdx]
+      newStartVnode = newChildren[++newStartIdx]
+    }
+    
+    // 2. 旧结束 vs 新结束
+    else if (isSameVnode(oldEndVnode, newEndVnode)) {
+      patchVnode(oldEndVnode, newEndVnode)
+      oldEndVnode = oldChildren[--oldEndIdx]
+      newEndVnode = newChildren[--newEndIdx]
+    }
+    
+    // 3. 旧开始 vs 新结束
+    else if (isSameVnode(oldStartVnode, newEndVnode)) {
+      patchVnode(oldStartVnode, newEndVnode)
+      parentElm.insertBefore(oldStartVnode.el, oldEndVnode.el.nextSibling)
+      oldStartVnode = oldChildren[++oldStartIdx]
+      newEndVnode = newChildren[--newEndIdx]
+    }
+    
+    // 4. 旧结束 vs 新开始
+    else if (isSameVnode(oldEndVnode, newStartVnode)) {
+      patchVnode(oldEndVnode, newStartVnode)
+      parentElm.insertBefore(oldEndVnode.el, oldStartVnode.el)
+      oldEndVnode = oldChildren[--oldEndIdx]
+      newStartVnode = newChildren[++newStartIdx]
+    }
+    
+    // 5. 暴力比对（key映射）
+    else {
+      const idxInOld = keyToIdx[newStartVnode.key]
+      
+      if (!idxInOld) {
+        // 新节点：创建并插入
+        parentElm.insertBefore(createElm(newStartVnode), oldStartVnode.el)
+      } else {
+        // 复用节点
+        const vnodeToMove = oldChildren[idxInOld]
+        patchVnode(vnodeToMove, newStartVnode)
+        oldChildren[idxInOld] = undefined
+        parentElm.insertBefore(vnodeToMove.el, oldStartVnode.el)
+      }
+      
+      newStartVnode = newChildren[++newStartIdx]
+    }
+  }
+  
+  // 处理剩余节点
+  if (newStartIdx <= newEndIdx) {
+    // 添加新节点
+    newChildren.slice(newStartIdx, newEndIdx + 1).forEach(child => {
+      parentElm.appendChild(createElm(child))
+    })
+  }
+  
+  if (oldStartIdx <= oldEndIdx) {
+    // 删除旧节点
+    oldChildren.slice(oldStartIdx, oldEndIdx + 1).forEach(child => {
+      if (child) parentElm.removeChild(child.el)
+    })
+  }
+}
+
+// 判断是否是相同节点
+function isSameVnode(oldVnode, newVnode) {
+  return oldVnode.key === newVnode.key && oldVnode.tag === newVnode.tag
+}
+
+// 创建key到索引的映射
+function createKeyToOldIdx(children) {
+  const map = {}
+  children.forEach((child, idx) => {
+    if (child.key) {
+      map[child.key] = idx
+    }
+  })
+  return map
+}
+```
+
+## 四、Diff算法优化策略
+
+### 1. 四种常见DOM操作优化
+
+1. **头头比对**：同标签同key，直接复用（列表尾部添加）
+2. **尾尾比对**：同标签同key，直接复用（列表头部添加）
+3. **头尾比对**：同标签同key，移动节点（列表反转）
+4. **尾头比对**：同标签同key，移动节点（列表倒序）
+
+### 2. Key的重要性
+
+- **无key**：使用索引作为隐式key，可能导致节点复用错误
+- **有key**：通过key精准匹配节点，避免DOM操作错误
+
+### 3. 实战建议
+
+```html
+<!-- 推荐：使用唯一key -->
+<ul>
+  <li v-for="item in list" :key="item.id">{{item.name}}</li>
+</ul>
+
+<!-- 不推荐：使用索引作为key -->
+<ul>
+  <li v-for="(item, index) in list" :key="index">{{item.name}}</li>
+</ul>
+```
+
+## 五、Diff算法复杂度分析
+
+- **时间复杂度**：O(n)（仅遍历新旧节点各一次）
+- **空间复杂度**：O(n)（key映射表）
+- **最坏情况**：需要移动所有节点
+
+相比传统DOM操作的O(n²)复杂度，Vue的Diff算法实现了线性复杂度的高效更新。
+
+下一篇我们将讲解Vue的Computed和Watch实现原理，继续深入Vue核心！
