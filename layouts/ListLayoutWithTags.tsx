@@ -117,7 +117,7 @@ export default function ListLayoutWithTags({
                     const currentTag = decodeURIComponent(
                       (pathname.split('/tags/')[1] || '').split('/')[0]
                     )
-                    const isActive = currentTag === slug(t)
+                    const isActive = currentTag === slug(t) || currentTag === t
                     return (
                       <li key={t} className="my-3">
                         {isActive ? (
@@ -126,7 +126,7 @@ export default function ListLayoutWithTags({
                           </h3>
                         ) : (
                           <Link
-                            href={`/tags/${slug(t)}`}
+                            href={`/tags/${encodeURIComponent(t)}`}
                             className="hover:text-primary-500 px-3 py-2 text-sm font-medium text-gray-500 uppercase"
                             aria-label={`查看标签 ${t} 的文章`}
                           >
