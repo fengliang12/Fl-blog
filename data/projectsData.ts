@@ -13,10 +13,10 @@ const projectsData: Project[] = [
     href: 'https://web3-university.top/',
   },
   {
-    title: 'The Time Chat',
-    description: `这是一个用 Cloudflare Workers 搭的简单中转小工具，专门给我 Cloudflare Pages 上的 React 聊天框页面服务～前端点聊天框发消息，会先经过这个 Worker 中转再去调 OpenAI 的 API，主要就是试试手，解决下前端直接调 API 的跨域问题。`,
-    imgSrc: '/static/images/time-machine.jpg',
-    href: 'https://fengqilin168.top/',
+    title: '个人私仓（Hooks、UI、Performance SDK、Libs）',
+    description: `个人维护的前端私有仓库，包含 Hooks、UI 组件库、性能采集 SDK 与工具库等模块；统一版本管理与发布，便于在多个项目中复用与迭代。`,
+    imgSrc: '/static/images/monorepo2.png',
+    href: 'http://ec2-3-93-66-55.compute-1.amazonaws.com:4873/',
   },
 ]
 
