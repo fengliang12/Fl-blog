@@ -33,14 +33,23 @@
   },
   "include": [
     "next-env.d.ts",
+    "app/**/*",
+    "app/*",
+    "components/**/*",
+    "components/*",
+    "layouts/**/*",
+    "data/**/*",
     "**/*.js",
     "**/*.mjs",
     "**/*.ts",
     "**/*.tsx",
     "**/*.json",
+    "**/*.md",
+    "**/*.mdx",
     ".contentlayer/generated",
     ".contentlayer/generated/**/*.json",
+    ".contentlayer/generated/**/*.mjs",
     ".next/types/**/*.ts",
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", ".next"]
 }

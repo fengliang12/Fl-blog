@@ -17,12 +17,8 @@ export default function Footer() {
           <div className="flex flex-wrap justify-center gap-4 text-gray-600">
             <SocialIcon kind="mail" href={`mailto:${siteMetadata.email}`} size={6} />
             <SocialIcon kind="github" href={siteMetadata.github} size={6} />
-            <SocialIcon kind="facebook" href={siteMetadata.facebook} size={6} />
-            <SocialIcon kind="linkedin" href={siteMetadata.linkedin} size={6} />
-            <SocialIcon kind="twitter" href={siteMetadata.twitter} size={6} />
           </div>
           <div className="flex flex-col items-center gap-1 text-xs font-semibold tracking-[0.4em] text-gray-500 uppercase">
-            <span>{siteMetadata.author}</span>
             <span>{`© ${new Date().getFullYear()} ${siteMetadata.title}`}</span>
           </div>
           <div className="text-xs text-gray-500">
