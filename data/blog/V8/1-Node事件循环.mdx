@@ -114,7 +114,7 @@ server.close();
 | 特性维度         | Node.js事件循环（libuv）| 浏览器事件循环                          |
 |------------------|-----------------------------------------|-----------------------------------------|
 | 底层实现         | 基于libuv库（C语言），分6个阶段         | 基于浏览器内核（Blink/WebKit），分宏/微任务 |
-| 微任务执行时机   | 每个阶段结束后执行（`process.nextTick`优先级最高） | 每个宏任务执行后清空所有微任务          |
+| 微任务执行时机   | 每个回调结束后执行（`process.nextTick`优先级最高） | 每个宏任务执行后清空所有微任务          |
 | 核心关注场景     | 后端I/O处理（文件/网络）| 前端渲染（重绘/回流）+ 用户交互        |
 | 特殊API支持      | `setImmediate`/`process.nextTick`       | `requestAnimationFrame`/`MutationObserver` |
 | 定时器精度       | 受事件循环阶段影响，精度约1ms            | 受浏览器渲染帧率影响，精度约4ms         |
@@ -190,22 +190,168 @@ while (eventLoop.isAlive()) {
 }
 ```
 
+# Node.js 事件循环中的微任务执行时机
+
+## 核心结论
+
+**微任务在每个宏任务（回调函数）执行完毕后立即执行，而不是等整个阶段或整个事件循环结束。**
+
+## 事件循环的 6 个阶段
+
+```
+   ┌───────────────────────────┐
+┌─>│         timers            │  执行 setTimeout/setInterval
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+│  │   pending callbacks       │  执行 I/O 回调
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+│  │     idle, prepare         │  内部使用
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+│  │         poll              │  获取新的 I/O 事件
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+│  │         check             │  执行 setImmediate
+│  └─────────────┬─────────────┘
+│  ┌─────────────┴─────────────┐
+│  │    close callbacks        │  执行 close 事件
+│  └─────────────┬─────────────┘
+└──────────────────────────────┘
+```
+
+## 微任务执行时机详解
+
+### 规则
+每执行完一个宏任务（回调），就立即清空微任务队列。
+
+### 示例
+
+```javascript
+setTimeout(() => {
+  console.log('timer1');
+  Promise.resolve().then(() => console.log('promise1'));
+}, 0);
+
+setTimeout(() => {
+  console.log('timer2');
+  Promise.resolve().then(() => console.log('promise2'));
+}, 0);
+
+// 输出：
+// timer1
+// promise1    ← timer1 回调执行完，立即执行其微任务
+// timer2
+// promise2    ← timer2 回调执行完，立即执行其微任务
+```
+
+### 执行流程
+
+```
+timers 阶段：
+  1. 执行 timer1 回调 → console.log('timer1')
+  2. 清空微任务队列 → console.log('promise1')
+  3. 执行 timer2 回调 → console.log('timer2')
+  4. 清空微任务队列 → console.log('promise2')
+```
+
+## 常见误解 ❌
+
+1. ❌ 微任务在整个阶段的所有回调执行完才执行
+2. ❌ 微任务在整个事件循环（6个阶段）结束才执行
+3. ❌ timers 阶段的所有 setTimeout 都执行完才执行微任务
+
+## 正确理解 ✅
+
+- ✅ 每个宏任务执行完 → 立即清空微任务队列
+- ✅ 微任务优先级高于下一个宏任务
+- ✅ 这确保了 Promise 的高优先级特性
+
+## 微任务类型
+
+- `Promise.then/catch/finally`
+- `process.nextTick` (优先级更高，在微任务之前)
+- `queueMicrotask()`
+- `MutationObserver`
+
+## 宏任务类型
+
+- `setTimeout`
+- `setInterval`
+- `setImmediate`
+- I/O 操作
+- UI 渲染（浏览器）
+
+## process.nextTick 特殊性
+
+```javascript
+setTimeout(() => {
+  console.log('timer');
+  process.nextTick(() => console.log('nextTick'));
+  Promise.resolve().then(() => console.log('promise'));
+}, 0);
+
+// 输出：
+// timer
+// nextTick    ← nextTick 优先于 Promise
+// promise
+```
+
+`process.nextTick` 优先级高于普通微任务，在微任务队列之前执行。
+
+## 关键记忆点
+
+**宏任务 → 微任务 → 宏任务 → 微任务 → ...**
+
+每执行一个宏任务，就清空一次微任务队列，然后才执行下一个宏任务。
 
 ```mermaid
-flowchart TD
-    A[事件循环启动] --> B[timers阶段：执行setTimeout/setInterval]
-    B --> C[pending callbacks阶段：执行延迟系统回调]
-    C --> D[idle/prepare阶段：内部准备]
-    D --> E[poll阶段：处理I/O事件/等待新事件]
-    E --> F{是否有setImmediate回调？}
-    F -- 是 --> G[check阶段：执行setImmediate]
-    F -- 否 --> E
-    G --> H[close callbacks阶段：执行关闭回调]
-    H --> I[执行微任务：nextTick/Promise]
-    I --> J{是否还有待处理任务？}
-    J -- 是 --> B
-    J -- 否 --> K[事件循环退出]
+graph TB
+    Start([开始新的事件循环]) --> Timers[Timers 阶段]
     
-    %% 阶段跳转逻辑
-    E -->|timer到期| B
+    Timers --> TimerCallback{有 timer 回调?}
+    TimerCallback -->|是| ExecTimer[执行一个 timer 回调]
+    ExecTimer --> ClearMicro1[清空微任务队列]
+    ClearMicro1 --> TimerCallback
+    TimerCallback -->|否| Pending[Pending Callbacks 阶段]
+    
+    Pending --> PendingCallback{有 pending 回调?}
+    PendingCallback -->|是| ExecPending[执行一个 pending 回调]
+    ExecPending --> ClearMicro2[清空微任务队列]
+    ClearMicro2 --> PendingCallback
+    PendingCallback -->|否| Idle[Idle/Prepare 阶段]
+    
+    Idle --> Poll[Poll 阶段]
+    Poll --> PollCallback{有 I/O 回调?}
+    PollCallback -->|是| ExecPoll[执行一个 I/O 回调]
+    ExecPoll --> ClearMicro3[清空微任务队列]
+    ClearMicro3 --> PollCallback
+    PollCallback -->|否| Check[Check 阶段]
+    
+    Check --> CheckCallback{有 setImmediate 回调?}
+    CheckCallback -->|是| ExecCheck[执行一个 setImmediate 回调]
+    ExecCheck --> ClearMicro4[清空微任务队列]
+    ClearMicro4 --> CheckCallback
+    CheckCallback -->|否| Close[Close Callbacks 阶段]
+    
+    Close --> CloseCallback{有 close 回调?}
+    CloseCallback -->|是| ExecClose[执行一个 close 回调]
+    ExecClose --> ClearMicro5[清空微任务队列]
+    ClearMicro5 --> CloseCallback
+    CloseCallback -->|否| Continue{继续循环?}
+    
+    Continue -->|是| Timers
+    Continue -->|否| End([结束])
+    
+    style ClearMicro1 fill:#90EE90
+    style ClearMicro2 fill:#90EE90
+    style ClearMicro3 fill:#90EE90
+    style ClearMicro4 fill:#90EE90
+    style ClearMicro5 fill:#90EE90
+    
+    style ExecTimer fill:#FFE4B5
+    style ExecPending fill:#FFE4B5
+    style ExecPoll fill:#FFE4B5
+    style ExecCheck fill:#FFE4B5
+    style ExecClose fill:#FFE4B5
     ```

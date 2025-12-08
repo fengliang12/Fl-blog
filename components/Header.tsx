@@ -24,16 +24,13 @@ const Header = () => {
               aria-label={siteMetadata.headerTitle}
               className="flex flex-1 items-center gap-3"
             >
-              <span className="from-primary-100 to-primary-300 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br shadow-lg">
+              <span className="from-primary-100 to-primary-300 flex w-12 items-center justify-center rounded-2xl bg-gradient-to-br shadow-lg">
                 <Image className="h-full w-full rounded-2xl" src={Logo} alt="logo" />
               </span>
               <span>
                 <span className="text-lg font-black tracking-[0.15em] text-gray-900 uppercase">
                   {siteMetadata.headerTitle}
                 </span>
-                <p className="text-xs font-semibold tracking-[0.35em] text-gray-500 uppercase">
-                  Cartoon Studio
-                </p>
               </span>
             </Link>
             <nav className="hidden flex-1 items-center justify-center gap-3 lg:flex">
