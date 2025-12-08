@@ -34,7 +34,7 @@ const projectsData: Project[] = [
     title: '聊天机器人',
     description: '一个基于 Next.js 构建的聊天机器人应用，支持实时聊天、群聊、文件传输等功能。',
     imgSrc: '/static/images/chat.png',
-    href: 'https://fengqilin168.top/',
+    href: 'https://chat-app-dm3.pages.dev/',
   },
   {
     title: '10000个高频英语单词',
